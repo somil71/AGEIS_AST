@@ -357,14 +357,19 @@ impl PolicyParser {
     /// Split a string into a section number component and title component.
     pub fn split_number_and_title(text: &str) -> Option<(String, String)> {
         let text = text.trim();
-        let first_sep = text.find(|c: char| c.is_whitespace() || c == ':' || c == '-')?;
-        let (num_part, rest) = text.split_at(first_sep);
+        let first_sep = text.find(|c: char| c.is_whitespace() || c == ':' || c == '-');
+        
+        let (num_part, rest) = match first_sep {
+            Some(pos) => text.split_at(pos),
+            None => (text, ""), // No title, just a number
+        };
+
         let clean_num = num_part.trim_matches(|c: char| c == '.' || c == ':' || c == '-').trim();
         let clean_title = rest
             .trim_matches(|c: char| c == '.' || c == ':' || c == '-' || c.is_whitespace())
             .trim();
 
-        if clean_num.is_empty() || clean_title.is_empty() {
+        if clean_num.is_empty() {
             return None;
         }
 
