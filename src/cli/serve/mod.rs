@@ -1,4 +1,4 @@
-//! `needle serve` — local web UI backed by axum.
+//! `sentinel serve` — local web UI backed by axum.
 
 #[cfg(feature = "cloud")]
 mod handlers_core;
@@ -232,7 +232,7 @@ pub async fn run(port: u16, no_open: bool) -> needle::Result<()> {
                 }
             }
             (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
-                eprintln!("{} Index appears corrupted ({e}). Falling back to empty state. Run 'needle reindex'.", "⚠".yellow().bold());
+                eprintln!("{} Index appears corrupted ({e}). Falling back to empty state. Run 'sentinel reindex'.", "⚠".yellow().bold());
                 AppState {
                     engine:        None,
                     storage:       None,
@@ -248,7 +248,7 @@ pub async fn run(port: u16, no_open: bool) -> needle::Result<()> {
         }
     } else {
         if !is_cloud {
-            eprintln!("{} No index found — running in marketing mode.\n  Run: needle init <dirs...> to index your code.",
+            eprintln!("{} No index found — running in marketing mode.\n  Run: sentinel init <dirs...> to index your code.",
                 "Note:".yellow().bold());
         }
         AppState {
@@ -334,6 +334,8 @@ pub async fn run(port: u16, no_open: bool) -> needle::Result<()> {
         .route("/api/import/clear",    post(handlers_import::api_import_clear))
         .route("/api/audit",           get(handlers_sentinel::api_sentinel_audit))
         .route("/api/ledger",          get(handlers_sentinel::api_sentinel_ledger))
+        .route("/api/policy/upload",  post(|multipart: axum::extract::Multipart| async move { handlers_sentinel::api_policy_upload(multipart).await }))
+        .route("/api/policies",        get(handlers_sentinel::api_policies_list))
         .route("/api/ledger/verify",   get(handlers_sentinel::api_sentinel_ledger_verify))
         .route("/api/ledger/sign",     post(handlers_sentinel::api_sentinel_ledger_sign))
         .route("/api/doctor",          get(handlers_sentinel::api_sentinel_doctor))
@@ -360,9 +362,9 @@ pub async fn run(port: u16, no_open: bool) -> needle::Result<()> {
 
     let url = format!("http://localhost:{}", bind_port);
     println!();
-    println!("  {}  {}", "Needle".bold(), url.cyan().bold());
+    println!("  {}  {}", "Sentinel".bold(), url.cyan().bold());
     if has_index { println!("  {} Index loaded", "✓".green()); }
-    else { println!("  {} No index — marketing mode (run 'needle init' to index code)", "·".dimmed()); }
+    else { println!("  {} No index — marketing mode (run 'sentinel init' to index code)", "·".dimmed()); }
     if has_oauth { println!("  {} GitHub OAuth configured", "✓".green()); }
     println!("  {} Ctrl+C to stop\n", "·".dimmed());
 
@@ -445,6 +447,6 @@ pub(super) async fn load_cloud_engines(
 
 #[cfg(not(feature = "cloud"))]
 pub async fn run(_port: u16, _no_open: bool) -> needle::Result<()> {
-    println!("needle serve is disabled in sovereign build mode. Use CLI commands (needle search, needle audit, needle doctor) or stdio MCP.");
+    println!("sentinel serve is disabled in sovereign build mode. Use CLI commands (sentinel search, sentinel audit, sentinel doctor) or stdio MCP.");
     Ok(())
 }

@@ -1,9 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+
+<script type="module">
+  // Conditionally load Tauri so it works in the browser
+  let invoke, listen;
+  if (window.__TAURI__) {
+    invoke = window.__TAURI__.core.invoke;
+    listen = window.__TAURI__.event.listen;
+  }
+
+  // Override fetch to route /api/* to Tauri invoke
+  const originalFetch = window.fetch;
+  window.fetch = async (...args) => {
+    let url = typeof args[0] === 'string' ? args[0] : args[0].url;
+    let opts = args[1] || {};
+    
+    if (url.startsWith('/api/') && window.__TAURI__) {
+      const isGet = !opts.method || opts.method.toUpperCase() === 'GET';
+      const path = url.split('?')[0];
+      const searchParams = new URLSearchParams(url.split('?')[1] || '');
+      
+      let payload = opts.body ? JSON.parse(opts.body) : {};
+      for (const [key, val] of searchParams) {
+          payload[key] = val;
+      }
+
+      console.log("[Tauri IPC] Intercepted:", path, payload);
+      
+      try {
+        if (path === '/api/status') {
+            return new Response(JSON.stringify({ status: 'ok', indexed: true }), { status: 200 });
+        }
+        else if (path === '/api/import/local') {
+            const dir = await invoke('cmd_open_folder', {});
+            if (dir) {
+                await invoke('cmd_index_folder', { dir });
+                return new Response(JSON.stringify({ success: true }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ error: 'Cancelled' }), { status: 400 });
+        }
+        else if (path === '/api/graph') {
+            const dataStr = await invoke('cmd_get_graph', {});
+            return new Response(dataStr, { status: 200 });
+        }
+        else if (path === '/api/search') {
+            const q = payload.q || '';
+            const results = await invoke('cmd_search', { query: q });
+            return new Response(JSON.stringify({ results }), { status: 200 });
+        }
+        else if (path === '/api/ask') {
+            const q = payload.question || '';
+            const result = await invoke('cmd_ask', { question: q });
+            // Mock format for Ask
+            return new Response(JSON.stringify({ answer: result.answer, sources: result.context || [] }), { status: 200 });
+        }
+        else if (path === '/api/repos') {
+             return new Response(JSON.stringify([]), { status: 200 });
+        }
+        else if (path === '/api/files' || path === '/api/todos' || path === '/api/health' || path === '/api/security') {
+             // Mock empty arrays for unimplemented endpoints
+             return new Response(JSON.stringify([]), { status: 200 });
+        }
+        
+        console.warn("[Tauri IPC] Unhandled endpoint:", path);
+        return new Response(JSON.stringify({}), { status: 200 });
+      } catch (e) {
+        console.error("[Tauri IPC Error]", e);
+        return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+      }
+    }
+    return originalFetch(...args);
+  };
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Needle — Local Code Search</title>
+<title>Sentinel Auditor</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-sankey/0.12.3/d3-sankey.min.js"></script>
@@ -11,14 +84,15 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { letter-spacing: 0.01em; -webkit-font-smoothing: antialiased; }
 
 :root {
   
-  --bg0:           #07080F;
-  --bg2:           #131626;
+  --bg0:           #0f1115;
+  --bg2:           #1c1f26;
   --bg3:           rgba(255,255,255,0.05);
   --border2:       rgba(255,255,255,0.08);
-  --acc:           #7C3AED;
+  --acc:           #3b82f6;
   --green:         #22C55E;
   --orange:        #F59E0B;
   --red:           #EF4444;
@@ -28,14 +102,14 @@
   --t2:            #9496A4;
   --t3:            #56576A;
 
-  --bg:            #07080F;
-  --surface:       #0D0F1A;
-  --surface-2:     #131626;
+  --bg:            #0f1115;
+  --surface:       #16181d;
+  --surface-2:     #1c1f26;
   --border:        rgba(255,255,255,0.08);
-  --accent:        #7C3AED;
-  --accent-hover:  #6D28D9;
-  --accent-subtle: rgba(124,58,237,0.12);
-  --accent-glow:   rgba(124,58,237,0.32);
+  --accent:        #3b82f6;
+  --accent-hover:  #2563eb;
+  --accent-subtle: rgba(59,130,246,0.12);
+  --accent-glow:   rgba(0,0,0,0);
   --text:          #EDEEF2;
   --text-2:        #9496A4;
   --text-3:        #56576A;
@@ -55,7 +129,7 @@ html.light {
   --surface:       #F2F3F8;
   --surface-2:     #E8EAF2;
   --border:        rgba(0,0,0,0.08);
-  --accent:        #6D28D9;
+  --accent:        #2563eb;
   --accent-hover:  #5B21B6;
   --accent-subtle: rgba(109,40,217,0.08);
   --accent-glow:   rgba(109,40,217,0.20);
@@ -98,8 +172,8 @@ h3 { font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.01em; line-heigh
 p { color: var(--text-2); }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-code { font-family: var(--mono); font-size: 0.875em; background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.15em 0.45em; }
-pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; overflow-x: auto; }
+code { font-family: var(--mono); font-size: 0.875em; background: var(--code-bg); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); border-radius: 4px; padding: 0.15em 0.45em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); border-radius: var(--radius); padding: 1rem 1.25rem; overflow-x: auto; }
 pre code { background: none; border: none; padding: 0; font-size: 0.875rem; }
 
 /* ── Layout ─────────────────────────────────────────── */
@@ -125,14 +199,19 @@ html.light #navbar {
 #navbar .container {
   display: flex; align-items: center; gap: 8px; width: 100%; max-width: 1200px;
 }
+
 .nav-logo {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 1rem; font-weight: 700; color: var(--text);
-  text-decoration: none; letter-spacing: -0.01em;
-  flex-shrink: 0; margin-right: 8px;
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 1.05rem; color: var(--text);
+  text-decoration: none; cursor: pointer; line-height: 1;
 }
 .nav-logo:hover { text-decoration: none; color: var(--text); }
-.nav-logo svg { color: var(--accent); }
+.nav-logo svg { color: var(--accent); flex-shrink: 0; display: block; }
+.nav-logo span { display: flex; align-items: center; line-height: 1; }
+.stat-card.accent-green .stat-value { color: var(--green); }
+.stat-card.accent-red .stat-value { color: var(--red); }
+.stat-card.accent-amber .stat-value { color: var(--orange); }
+.stat-card.accent-blue .stat-value { color: var(--blue); }
 .nav-links {
   display: flex; align-items: center; gap: 1px; flex: 1;
 }
@@ -166,7 +245,7 @@ html.light #navbar {
   display: flex; align-items: center; gap: 6px;
   font-size: 0.75rem; color: var(--text-3);
   padding: 4px 10px; border-radius: 20px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   background: var(--surface);
   margin-right: 4px;
 }
@@ -175,28 +254,23 @@ html.light #navbar {
 .dot.yellow { background: var(--warning); }
 
 /* ── Buttons ─────────────────────────────────────────── */
-.btn {
+.btn { box-shadow: 0 1px 2px rgba(0,0,0,0.1);
   display: inline-flex; align-items: center; gap: 8px;
   padding: 9px 18px; border-radius: var(--radius);
   font-size: 0.875rem; font-weight: 500; cursor: pointer;
   border: none; font-family: var(--font); transition: all 0.15s;
   text-decoration: none; line-height: 1;
 }
-.btn-primary {
+.btn-primary { box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
   background: var(--accent); color: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,0.25);
   transition: background 0.15s, box-shadow 0.2s, transform 0.1s;
 }
-.btn-primary:hover {
-  background: var(--accent-hover);
-  box-shadow: 0 4px 22px var(--accent-glow);
-  transform: translateY(-1px);
-  text-decoration: none; color: #fff;
-}
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 4px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1); }
 .btn-primary:active { transform: translateY(0); box-shadow: 0 1px 4px rgba(0,0,0,0.25); }
 .btn-ghost {
   background: none; color: var(--text-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 .btn-ghost:hover { background: var(--surface); color: var(--text); text-decoration: none; }
 .btn-sm { padding: 6px 12px; font-size: 0.8125rem; }
@@ -204,7 +278,7 @@ html.light #navbar {
 
 /* ── Forms ───────────────────────────────────────────── */
 input, select, textarea {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius); color: var(--text);
   font-family: var(--font); font-size: 0.9375rem;
   outline: none; transition: border-color 0.15s;
@@ -218,7 +292,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 
 /* ── Cards ───────────────────────────────────────────── */
 .card {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); padding: 24px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
@@ -265,7 +339,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
   display: inline-flex; align-items: center;
   padding: 2px 8px; border-radius: 4px;
   font-size: 0.75rem; font-weight: 500; font-family: var(--mono);
-  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); color: var(--text-2);
 }
 .badge.accent { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent); }
 .badge.success { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.3); color: var(--success); }
@@ -347,7 +421,7 @@ html.light #page-home .hero h1 {
   margin: 0;
   max-width: none;
   border-radius: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   background: var(--surface);
   overflow: hidden;
   box-shadow:
@@ -402,7 +476,7 @@ html.light #page-home .hero h1 {
 .demo-badge.sem  { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
 .demo-badge.bm25 { background: rgba(6,182,212,0.12); color: #67e8f9; border: 1px solid rgba(6,182,212,0.25); }
 .demo-badge.both { background: rgba(16,185,129,0.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.25); }
-.demo-badge.lang { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }
+.demo-badge.lang { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
 .hero-demo-path {
   font-size: 0.8125rem; font-family: var(--mono); color: var(--accent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -428,7 +502,7 @@ html.light #page-home .hero h1 {
 .features-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--border);
@@ -463,7 +537,7 @@ html.light #page-home .hero h1 {
   gap: 24px; margin-top: 40px;
 }
 .how-card {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); overflow: hidden;
   box-shadow: 0 2px 12px rgba(0,0,0,0.18);
   transition: box-shadow 0.2s;
@@ -502,7 +576,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 .agent-pill {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 7px 14px; border-radius: 24px;
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   font-size: 0.875rem; font-weight: 500; color: var(--text-2);
   cursor: pointer; transition: all 0.15s; text-decoration: none;
 }
@@ -511,7 +585,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 /* ── Stats row ──────────────────────────────────────── */
 .stats-row {
   display: flex; gap: 1px;
-  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); border-radius: var(--radius-lg);
   overflow: hidden; background: var(--border);
   margin: 40px 0;
 }
@@ -524,9 +598,7 @@ html.light .terminal-mock { background: #1a1a1a; }
   letter-spacing: -0.04em; line-height: 1;
   margin-bottom: 6px; font-variant-numeric: tabular-nums;
 }
-.stat-box .stat-label {
-  font-size: 0.8125rem; color: var(--text-3); letter-spacing: 0.01em;
-}
+.stat-box .stat-label { font-size: 13px; color: var(--text-2); margin-top: 8px; font-weight: 500; letter-spacing: 0.2px; }
 
 .section-header { margin-bottom: 48px; }
 .section-header h2 { margin-bottom: 10px; }
@@ -535,7 +607,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 /* ── Buttons (secondary) ────────────────────────────── */
 .btn-secondary {
   background: var(--surface); color: var(--text-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 .btn-secondary:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 
@@ -582,7 +654,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 #search-results { display: flex; flex-direction: column; gap: 12px; }
 
 .result-card {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); overflow: hidden;
   transition: border-color 0.15s;
 }
@@ -608,7 +680,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 #ask-context-select { width: 160px; height: 38px; padding: 0 10px; flex-shrink: 0; }
 #ask-btn { height: 38px; }
 #ask-output {
-  margin-top: 20px; background: var(--surface); border: 1px solid var(--border);
+  margin-top: 20px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); padding: 20px;
   font-size: 0.9375rem; line-height: 1.7; display: none;
 }
@@ -619,7 +691,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 #ask-output .ask-sources li { font-size: 0.8125rem; font-family: var(--mono); color: var(--text-2); }
 
 .similar-panel {
-  margin-top: 16px; background: var(--surface-2); border: 1px solid var(--border);
+  margin-top: 16px; background: var(--surface-2); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius); padding: 16px; display: none;
 }
 .similar-panel.open { display: block; }
@@ -650,11 +722,11 @@ html.light .terminal-mock { background: #1a1a1a; }
   padding: 24px 26px;
   position: relative;
   overflow: hidden;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease-out;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
 }
-.stat-label { font-size: 0.8125rem; color: var(--text-3); margin-bottom: 6px; font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase; }
-.stat-value { font-size: 1.75rem; font-weight: 700; color: var(--text); line-height: 1; }
+.stat-label { font-size: 13px; color: var(--text-2); margin-top: 8px; font-weight: 500; letter-spacing: 0.2px; }
+.stat-value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.2; color: var(--text); }
 .stat-sub { font-size: 0.8125rem; color: var(--text-3); margin-top: 4px; }
 
 .index-section { margin-bottom: 40px; }
@@ -676,7 +748,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 
 .todo-list { display: flex; flex-direction: column; gap: 8px; }
 .todo-item {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius); padding: 12px 16px;
   display: flex; gap: 12px; align-items: flex-start;
 }
@@ -719,7 +791,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 .setup-step-body pre { margin-top: 10px; }
 
 .callout {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-left: 3px solid var(--accent); border-radius: var(--radius);
   padding: 16px 20px; margin: 16px 0;
 }
@@ -740,7 +812,7 @@ html.light .terminal-mock { background: #1a1a1a; }
   gap: 20px;
 }
 .download-card {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); padding: 28px;
 }
 .download-card-header {
@@ -756,7 +828,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 .coming-soon-chip {
   font-size: 0.7rem; font-weight: 600; padding: 3px 8px;
   border-radius: 4px; background: var(--surface-2); color: var(--text-3);
-  border: 1px solid var(--border); letter-spacing: 0.04em;
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); letter-spacing: 0.04em;
 }
 .download-card h3 { margin-bottom: 8px; }
 .download-card p { font-size: 0.9375rem; margin-bottom: 20px; }
@@ -787,7 +859,7 @@ html.light .terminal-mock { background: #1a1a1a; }
 .settings-save-row { margin-top: 24px; }
 
 .local-notice {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); padding: 24px;
   display: flex; gap: 16px; align-items: flex-start;
 }
@@ -920,7 +992,7 @@ footer {
 /* Node tooltip */
 #graph-tooltip {
   position: absolute; pointer-events: none;
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius); padding: 10px 14px;
   font-size: 0.8125rem; color: var(--text);
   display: none; z-index: 10; max-width: 260px;
@@ -952,7 +1024,7 @@ footer {
 
 /* Health panel */
 #graph-health-panel {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: 10px; padding: 12px 14px;
   display: flex; align-items: center; gap: 12px;
 }
@@ -982,7 +1054,7 @@ footer {
 /* Stats grid */
 .gstats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .gstat-cell {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: 8px; padding: 10px 12px;
 }
 .gstat-n { font-size: 1.35rem; font-weight: 700; color: #10B981; line-height: 1; margin-bottom: 2px; }
@@ -990,7 +1062,7 @@ footer {
 
 /* LOC + language bar */
 .gloc-wrap {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: 8px; padding: 10px 12px;
 }
 .gloc-n { font-size: 1.35rem; font-weight: 700; color: #10B981; line-height: 1; margin-bottom: 1px; }
@@ -1008,7 +1080,7 @@ footer {
 .gview-btn {
   flex: 1; min-width: calc(33.33% - 4px);
   font-size: 0.68rem; font-weight: 600; padding: 5px 4px;
-  border-radius: 5px; border: 1px solid var(--border);
+  border-radius: 5px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   background: var(--surface); color: var(--text-2);
   cursor: pointer; text-align: center; white-space: nowrap;
   transition: background 0.12s, color 0.12s;
@@ -1037,7 +1109,7 @@ footer {
 }
 .gctrl-btn {
   width: 30px; height: 26px; border-radius: 5px;
-  background: none; border: 1px solid var(--border);
+  background: none; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   color: var(--text-2); cursor: pointer; font-size: 1rem; line-height: 1;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   transition: background 0.12s;
@@ -1098,7 +1170,7 @@ footer {
 /* Issue cards */
 .gip-issue {
   padding: 9px 10px; border-radius: 7px; margin-bottom: 7px;
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-left: 3px solid transparent; cursor: pointer; transition: border-color 0.12s, background 0.12s;
 }
 .gip-issue:hover { background: rgba(255,255,255,0.03); }
@@ -1149,7 +1221,7 @@ footer {
 /* Actions tab */
 .gip-action {
   padding: 10px 11px; border-radius: 7px; margin-bottom: 7px;
-  background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); display: flex; gap: 10px; align-items: flex-start;
 }
 .gip-action-num {
   width: 22px; height: 22px; border-radius: 50%; background: rgba(99,102,241,0.2); color: var(--accent);
@@ -1176,7 +1248,7 @@ footer {
 .gip-pat-group-hdr::after { content:''; flex:1; height:1px; background:var(--border); }
 
 /* Patterns item */
-.gip-pat { padding: 8px 10px; border-radius: 6px; margin-bottom: 5px; background: var(--surface); border: 1px solid var(--border); }
+.gip-pat { padding: 8px 10px; border-radius: 6px; margin-bottom: 5px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
 .gip-pat-title { font-size: 0.77rem; font-weight: 600; color: var(--text); margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
 .gip-pat-files { font-size: 0.69rem; color: var(--text-3); font-family: var(--mono); }
 .gip-impact { font-size: 0.63rem; font-weight: 700; padding: 1px 6px; border-radius: 3px; }
@@ -1254,7 +1326,7 @@ footer {
 .sel-tab {
   padding: 7px 16px;
   border-radius: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   background: var(--surface);
   color: var(--text-2);
   font-size: 0.875rem;
@@ -1277,7 +1349,7 @@ footer {
 .code-copy {
   position: relative;
   background: var(--code-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius);
   overflow: hidden;
   margin: 12px 0;
@@ -1294,7 +1366,7 @@ footer {
   right: 10px;
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   background: var(--surface);
   color: var(--text-2);
   font-size: 0.75rem;
@@ -1325,8 +1397,8 @@ footer {
   margin-bottom: 16px;
 }
 
-/* ── Needle logo icon ───────────────────────────────────── */
-.needle-logo-icon { color: var(--accent); flex-shrink: 0; }
+/* ── Sentinel logo icon ───────────────────────────────────── */
+.sentinel-logo-icon { color: var(--accent); flex-shrink: 0; }
 
 /* ── Platform tabs ──────────────────────────────────────── */
 .platform-tabs-wrap { margin-top: 40px; }
@@ -1349,7 +1421,7 @@ footer {
 .ptab-panel { display: none; }
 .ptab-panel.active { display: block; }
 .ptab-content {
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-top: none; border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
   padding: 32px 28px;
 }
@@ -1379,13 +1451,13 @@ footer {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 12px; border-radius: 20px;
   font-size: 0.8125rem; font-weight: 500; color: var(--text-2);
-  border: 1px solid var(--border); background: var(--surface-2);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: var(--surface-2);
 }
 
 /* ── FAQ ────────────────────────────────────────────────── */
 .faq-list {
   display: flex; flex-direction: column; gap: 0;
-  margin-top: 32px; border: 1px solid var(--border);
+  margin-top: 32px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg); overflow: hidden;
 }
 .faq-item { border-bottom: 1px solid var(--border); }
@@ -1514,7 +1586,7 @@ html.light .about-tag { background: var(--surface-2); border-color: var(--border
   background: var(--accent-subtle); border: 1px solid rgba(124,58,237,0.25); color: #a78bfa;
 }
 html.light .feat-chip { color: var(--accent); }
-html.light .demo-badge.sem  { color: #6D28D9; }
+html.light .demo-badge.sem  { color: #2563eb; }
 html.light .demo-badge.bm25 { color: #0369A1; background: rgba(6,182,212,0.08); }
 html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08); }
 
@@ -1530,7 +1602,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 /* ── Analysis pages ─────────────────────────────────────── */
 .analysis-stat-card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg);
   padding: 16px 22px;
   min-width: 120px;
@@ -1540,7 +1612,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 
 .health-section {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius-lg);
   padding: 20px 24px;
   margin-bottom: 14px;
@@ -1572,7 +1644,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 
 .penalty-card {
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius);
   padding: 12px 16px;
 }
@@ -1581,7 +1653,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 
 .sec-issue {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius);
   padding: 14px 16px;
   margin-bottom: 8px;
@@ -1626,7 +1698,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
   gap: 12px;
   padding: 9px 14px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   border-radius: var(--radius);
   margin-bottom: 6px;
   font-family: var(--mono);
@@ -1641,6 +1713,578 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
   border-radius: 99px;
   flex-shrink: 0;
 }
+
+/* Sentinel Styles */
+.spage { display: none; }
+.spage.active { display: block; }
+
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { letter-spacing: 0.01em; -webkit-font-smoothing: antialiased; }
+
+:root {
+  --bg:            #0f1115;
+  --surface:       #16181d;
+  --surface-2:     #1c1f26;
+  --surface-3:     #242831;
+  --border:        rgba(255,255,255,0.1);
+  --border-bright: rgba(255,255,255,0.13);
+  --accent:        #3b82f6;
+  --accent-hover:  #2563eb;
+  --accent-subtle: rgba(59,130,246,0.12);
+  --accent-glow:   rgba(0,0,0,0);
+  --green:         #22C55E;
+  --green-subtle:  rgba(34,197,94,0.12);
+  --amber:         #F59E0B;
+  --amber-subtle:  rgba(245,158,11,0.12);
+  --red:           #EF4444;
+  --red-subtle:    rgba(239,68,68,0.12);
+  --blue:          #3B82F6;
+  --blue-subtle:   rgba(59,130,246,0.12);
+  --text:          #EDEEF2;
+  --text-2:        #9496A4;
+  --text-3:        #4d4f61;
+  --mono:          'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font:          'Inter', system-ui, sans-serif;
+  --radius:        8px;
+  --radius-lg:     14px;
+  --nav-h:         60px;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Animated background grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Nav ─────────────────────────────────────────────────────────────────── */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: var(--nav-h);
+  background: rgba(7,8,15,0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  gap: 20px;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.nav-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  background: var(--accent-subtle);
+  color: #a78bfa;
+  border: 1px solid rgba(124,58,237,0.3);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+.nav-spacer { flex: 1; }
+.sovereign-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--green-subtle);
+  border: 1px solid rgba(34,197,94,0.25);
+  color: var(--green);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.sovereign-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+  50% { opacity: 0.8; box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+}
+
+.nav-tab { border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.nav-tab.active { background: transparent; border-bottom: 2px solid var(--accent); color: var(--text); border-radius: 0; }
+.nav-tab:hover:not(.active) { color: var(--text); background: var(--surface-3); }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.main { position: relative; z-index: 1; padding: 28px; max-width: 1320px; margin: 0 auto; }
+
+.page { display: none; }
+.page.active { display: block; animation: fadeIn 0.25s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Hero cards ──────────────────────────────────────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s ease-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
+}
+.stat-card:hover { border-color: var(--border-bright); transform: translateY(-2px); }
+
+
+
+
+
+
+
+.stat-icon { font-size: 24px; margin-bottom: 10px; }
+.stat-value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.2; color: var(--text); }
+
+
+
+
+
+.stat-label { font-size: 13px; color: var(--text-2); margin-top: 8px; font-weight: 500; letter-spacing: 0.2px; }
+
+/* Score ring */
+.score-ring-wrap { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
+.score-ring-card {
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s ease-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
+ display: flex; align-items: center; gap: 24px; flex: 1; }
+.ring-svg { width: 90px; height: 90px; flex-shrink: 0; }
+.ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 10; }
+.ring-fg { fill: none; stroke-width: 10; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1); }
+.ring-label { font-size: 18px; font-weight: 700; fill: var(--text); }
+.ring-sub   { font-size: 10px; fill: var(--text-2); }
+.score-details h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.score-details p  { font-size: 13px; color: var(--text-2); }
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.section-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.section-header span {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.section-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.badge-green { background: var(--green-subtle); color: var(--green); }
+.badge-red   { background: var(--red-subtle);   color: var(--red); }
+.badge-amber { background: var(--amber-subtle);  color: var(--amber); }
+.badge-blue  { background: var(--blue-subtle);   color: var(--blue); }
+
+/* ── Policy cards ────────────────────────────────────────────────────────── */
+.policy-list { display: flex; flex-direction: column; gap: 10px; }
+.policy-card {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.policy-card:hover { border-color: var(--border-bright); }
+.policy-card-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  cursor: pointer;
+  user-select: none;
+}
+.policy-card-header:hover { background: rgba(255,255,255,0.02); }
+.policy-icon {
+  width: 36px; height: 36px;
+  background: var(--accent-subtle);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+.policy-name { font-weight: 600; font-size: 14px; }
+.policy-meta { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+.policy-chevron { margin-left: auto; color: var(--text-3); font-size: 12px; transition: transform 0.2s; }
+.policy-card.open .policy-chevron { transform: rotate(180deg); }
+.mini-bar { display: flex; gap: 6px; align-items: center; }
+.mini-pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.pill-green  { background: var(--green-subtle); color: var(--green); }
+.pill-red    { background: var(--red-subtle); color: var(--red); }
+.pill-amber  { background: var(--amber-subtle); color: var(--amber); }
+
+/* Obligations table */
+.policy-body {
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.policy-card.open .policy-body { max-height: 1200px; }
+.obligations-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.obligations-table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-3);
+  padding: 10px 20px;
+  text-align: left;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.obligations-table td {
+  padding: 10px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.obligations-table tr:last-child td { border-bottom: none; }
+.obligations-table tr:hover td { background: rgba(255,255,255,0.02); }
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.status-dot::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.satisfied::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.violated::before  { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+.status-dot.no-evidence::before { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.status-dot.satisfied { color: var(--green); }
+.status-dot.violated  { color: var(--red); }
+.status-dot.no-evidence { color: var(--amber); }
+.evidence-file {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-top: 3px;
+}
+.sev-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.sev-critical { background: rgba(239,68,68,0.2); color: #f87171; }
+.sev-high     { background: rgba(239,68,68,0.12); color: #fca5a5; }
+.sev-medium   { background: rgba(245,158,11,0.15); color: var(--amber); }
+.sev-low      { background: rgba(59,130,246,0.12); color: #93c5fd; }
+.sev-info     { background: var(--surface-3); color: var(--text-2); }
+
+/* ── Ledger ──────────────────────────────────────────────────────────────── */
+.ledger-timeline { display: flex; flex-direction: column; gap: 0; }
+.ledger-block {
+  display: flex;
+  gap: 16px;
+  padding: 0 0 0 8px;
+}
+.ledger-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 28px;
+}
+.ledger-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  flex-shrink: 0;
+  margin-top: 4px;
+  z-index: 1;
+}
+.ledger-connector {
+  width: 2px;
+  flex: 1;
+  background: linear-gradient(var(--accent-subtle), transparent);
+  min-height: 16px;
+}
+.ledger-content {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  flex: 1;
+  transition: border-color 0.2s;
+}
+.ledger-content:hover { border-color: rgba(124,58,237,0.35); }
+.ledger-seq {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ledger-seq-num { font-size: 12px; color: #a78bfa; font-weight: 700; font-family: var(--mono); }
+.ledger-type {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--accent-subtle);
+  color: #a78bfa;
+  letter-spacing: 0.3px;
+}
+.ledger-ts { margin-left: auto; font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+.ledger-hash {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  word-break: break-all;
+}
+.hash-label { color: var(--text-3); flex-shrink: 0; font-size: 10px; text-transform: uppercase; }
+.verify-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* ── Doctor ──────────────────────────────────────────────────────────────── */
+.doctor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.check-card {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.check-card:hover { border-color: var(--border-bright); transform: translateY(-1px); }
+.check-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.check-icon { font-size: 20px; }
+.check-name { font-size: 14px; font-weight: 600; flex: 1; }
+.check-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+.check-status.pass { background: var(--green-subtle); color: var(--green); }
+.check-status.warn { background: var(--amber-subtle); color: var(--amber); }
+.check-status.fail { background: var(--red-subtle);   color: var(--red); }
+.check-detail { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+/* ── Action bar ──────────────────────────────────────────────────────────── */
+.action-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.btn { box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  border: none;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+  letter-spacing: 0.1px;
+}
+.btn-primary { box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 16px var(--accent-glow);
+}
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 4px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1); }
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.btn-secondary:hover { border-color: var(--border-bright); background: var(--surface-3); }
+.btn-success { background: var(--green-subtle); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
+.btn-success:hover { background: rgba(34,197,94,0.2); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+.btn .spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.search-wrap {
+  position: relative;
+  margin-bottom: 20px;
+}
+.search-icon {
+  position: absolute;
+  left: 14px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: 15px;
+}
+.search-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 13px 16px 13px 42px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.search-input::placeholder { color: var(--text-3); }
+
+/* ── Terminal / toast ────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  font-size: 13px;
+  z-index: 999;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+  max-width: 360px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-color: rgba(34,197,94,0.4); }
+.toast.error   { border-color: rgba(239,68,68,0.4); }
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 64px 24px;
+  color: var(--text-2);
+}
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.empty-state p  { font-size: 13px; }
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+.progress-bar-wrap {
+  background: var(--surface-2);
+  border-radius: 99px;
+  height: 6px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.progress-bar {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), var(--blue));
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .main { padding: 16px; }
+  nav { padding: 0 16px; gap: 12px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  
+}
+
 </style>
 </head>
 <body>
@@ -1649,14 +2293,49 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 <nav id="navbar">
   <div class="container">
     <a class="nav-logo" onclick="nav('home')" href="#/">
-      <svg class="needle-logo-icon" width="18" height="22" viewBox="0 0 18 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="9" cy="5" rx="4" ry="4.5" stroke="currentColor" stroke-width="2"/>
-        <ellipse cx="9" cy="5" rx="1.5" ry="1.8" fill="currentColor" opacity="0.3"/>
-        <rect x="8" y="9" width="2" height="13" rx="1" fill="currentColor"/>
-        <path d="M7 22 L9 27 L11 22 Z" fill="currentColor"/>
-      </svg>
-      Needle
+      <svg class="sentinel-logo-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" fill="var(--accent-subtle)"></polygon>
+  <polyline points="12 22 12 12 22 8.5"></polyline>
+  <polyline points="2 8.5 12 12"></polyline>
+</svg>
+      <span>Sentinel</span>
     </a>
+
+    
+      <style>
+      .nav-dropdown {
+        position: relative;
+        display: inline-block;
+      }
+      .nav-dropdown-content {
+        display: none;
+        position: absolute;
+        background-color: var(--surface-2);
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+        z-index: 1;
+        border-radius: 6px;
+        border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        top: 100%;
+        left: 0;
+      }
+      .nav-dropdown:hover .nav-dropdown-content {
+        display: flex;
+        flex-direction: column;
+      }
+      .nav-dropdown-content button {
+        width: 100%;
+        text-align: left;
+        padding: 10px 16px;
+        background: none;
+        border: none;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .nav-dropdown-content button:hover {
+        background-color: var(--surface-3);
+      }
+      </style>
 
     <div class="nav-links">
       <button class="nav-link" data-page="search" onclick="nav('search')">
@@ -1672,25 +2351,29 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         Graph
       </button>
-      <button class="nav-link" data-page="blast" onclick="nav('blast')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        Blast
-      </button>
-      <button class="nav-link" data-page="health" onclick="nav('health')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        Health
-      </button>
-      <button class="nav-link" data-page="security" onclick="nav('security')">
+      <div class="nav-sep"></div>
+      <button class="nav-link" data-page="sentinel" onclick="nav('sentinel')" style="color:var(--green)">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Security
+        Sentinel
       </button>
-      <button class="nav-link" data-page="churn" onclick="nav('churn')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Activity
-      </button>
+
+      <div class="nav-dropdown">
+        <button class="nav-link" style="cursor:default">
+          More <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:4px"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="nav-dropdown-content">
+          <button data-page="blast" onclick="nav('blast')">Blast Radius</button>
+          <button data-page="health" onclick="nav('health')">Health</button>
+          <button data-page="security" onclick="nav('security')">Security</button>
+          <button data-page="churn" onclick="nav('churn')">Activity</button>
+          <button data-page="download" onclick="nav('download')">Downloads</button>
+          <button data-page="setup" onclick="nav('setup')">Setup Guide</button>
+        </div>
+      </div>
     </div>
 
     <div class="nav-actions">
+      <!-- Sentinel SIH link -->
       <!-- GitHub Import button -->
       <button onclick="document.getElementById('github-import-modal').style.display='flex'"
         style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:var(--text);font-size:.82rem;cursor:pointer;white-space:nowrap;transition:background .15s"
@@ -1741,19 +2424,21 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
 
         <!-- Left: copy + CTAs -->
         <div class="hero-left">
-          <div class="hero-tag">// local &middot; private &middot; offline-first</div>
-          <h1>Understand your<br>codebase.<br>In seconds.</h1>
-          <p class="hero-sub">Hybrid BM25 + HNSW vector search, live call graph, and 11 MCP tools — all indexed on your machine. Nothing leaves.</p>
+          <div class="hero-tag">// sovereign-mode &middot; zero-trust &middot; cryptographic-ledger</div>
+          <h1>Autonomous Compliance<br>&amp; Security <span style="color:var(--accent)">Auditing.</span></h1>
+          <p class="hero-sub">Secure, air-gapped, and AI-powered. Sentinel continuously analyzes your entire codebase to enforce policy obligations, identify security vulnerabilities, and untangle legacy architecture—without your code ever leaving the machine.</p>
           <div class="hero-actions">
             <button class="btn btn-primary btn-lg" onclick="nav('search')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              Try search live
+              Try search
+            </button>
+            <button class="btn btn-lg" onclick="nav('sentinel')" style="background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3);text-decoration:none;display:inline-flex;align-items:center;gap:8px" onmouseenter="this.style.background='rgba(34,197,94,0.25)'" onmouseleave="this.style.background='rgba(34,197,94,0.15)'">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Launch Sentinel
             </button>
             <a class="btn btn-ghost btn-lg" href="https://github.com/somil71/needle" target="_blank" rel="noopener">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               GitHub
             </a>
-            <button class="btn btn-ghost btn-lg" onclick="nav('setup')">Get started →</button>
           </div>
           <div class="hero-proof">
             <span>Open source</span>
@@ -1773,7 +2458,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
               <div class="dots">
                 <div class="dot"></div><div class="dot"></div><div class="dot"></div>
               </div>
-              <span class="title">needle — live search demo</span>
+              <span class="title">Sentinel Auditor</span>
             </div>
             <div class="hero-demo-search">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1820,8 +2505,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </div>
-          <h3>Hybrid search — BM25 + HNSW</h3>
-          <p>Keyword matches (exact names, tokens) and semantic matches (meaning) fused via Reciprocal Rank Fusion so the best result is always first. Results in &lt;50 ms on 100k+ chunks.</p>
+          <h3>Air-Gapped Hybrid Search</h3>
+          <p>Find undocumented legacy logic instantly. Semantic meaning and keyword matches are fused entirely offline. Government and enterprise code never leaves the highly-secure intranet.</p>
           <div class="feat-chips">
             <span class="feat-chip">BM25</span>
             <span class="feat-chip">HNSW</span>
@@ -1834,8 +2519,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon" style="background:rgba(99,102,241,0.12);border-color:rgba(99,102,241,0.25);color:#818cf8;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><line x1="5" y1="7" x2="12" y2="17"/><line x1="19" y1="7" x2="12" y2="17"/><line x1="7" y1="5" x2="17" y2="5"/></svg>
           </div>
-          <h3>Interactive knowledge graph</h3>
-          <p>Every function, class, struct, and endpoint becomes a node. Directed edges show data flow: calls, imports, and containment. Click any node to instantly see which functions it <strong>calls</strong> and which nodes <strong>call it</strong> — with non-adjacent nodes dimmed so you can trace paths cleanly. Switch between Graph, 3D, Cluster, Radial, and 6 other layouts. Export as a standalone D3 HTML file with <code>needle graph</code>.</p>
+          <h3>Legacy Architecture Mapping</h3>
+          <p>Instantly visualize undocumented, tangled monoliths. Trace data flow, track global state, and expose hidden dependencies across decades-old codebases without any external cloud processing. Fully offline D3.js visualization.</p>
           <div class="feat-chips">
             <span class="feat-chip">call graph</span>
             <span class="feat-chip">callers &amp; callees</span>
@@ -1848,8 +2533,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon" style="background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.25);color:#10B981;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           </div>
-          <h3>Architectural graph report</h3>
-          <p><code>needle report</code> writes a Markdown file identifying god nodes (high-degree symbols everything depends on), semantic communities (label propagation clusters), and surprise edges (cross-community calls that reveal hidden coupling).</p>
+          <h3>Legacy Spaghetti Audit</h3>
+          <p>Automatically untangles massive God Nodes into semantic sub-chunks, maps obscure legacy vocabulary to modern concepts, and tracks hidden global state mutations across the entire codebase.</p>
           <div class="feat-chips">
             <span class="feat-chip">god nodes</span>
             <span class="feat-chip">communities</span>
@@ -1861,8 +2546,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon" style="background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.25);color:#F59E0B;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
           </div>
-          <h3>MCP server for AI agents</h3>
-          <p>Run <code>needle mcp</code> and your AI tool gets 11 tools: <code>search_code</code>, <code>find_callers</code>, <code>find_callees</code>, <code>get_god_nodes</code>, <code>get_endpoints</code>, <code>get_communities</code>, <code>get_surprises</code>, <code>explain</code>, <code>find_similar</code>, <code>get_file_structure</code>, <code>get_stats</code>.</p>
+          <h3>Air-Gapped AI Assistants</h3>
+          <p>Safely enable advanced AI coding tools inside classified government environments. Sentinel acts as a secure, local MCP context engine to feed legacy code intelligence to your offline agents.</p>
           <div class="feat-chips">
             <span class="feat-chip">Claude Code</span>
             <span class="feat-chip">Cursor</span>
@@ -1875,8 +2560,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon" style="background:rgba(236,72,153,0.1);border-color:rgba(236,72,153,0.25);color:#f472b6;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
           </div>
-          <h3>Ask your codebase (RAG)</h3>
-          <p>Type a plain-English question. Needle retrieves the top relevant code chunks and passes them as context to the best available LLM — Anthropic Claude, OpenAI, Groq, or local Ollama — automatically, in priority order.</p>
+          <h3>Secure Offline Q&A</h3>
+          <p>Ask questions about undocumented government codebases. Powered entirely by on-premise hardware via local Ollama models. Guarantee zero data leaks and maximum security compliance for sensitive repos.</p>
           <div class="feat-chips">
             <span class="feat-chip">Claude</span>
             <span class="feat-chip">OpenAI</span>
@@ -1889,8 +2574,8 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="feature-icon" style="background:rgba(6,182,212,0.1);border-color:rgba(6,182,212,0.25);color:#06B6D4;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
           </div>
-          <h3>8 languages + PDF, auto-indexed</h3>
-          <p>Tree-sitter AST chunking for Rust, Python, TypeScript/JavaScript, Go, Java, C, C++, and Markdown — functions and classes are discrete units, not arbitrary line windows. Drop a PDF in your repo; it's chunked and indexed automatically.</p>
+          <h3>Legacy & Modern, auto-indexed</h3>
+          <p>Optimized for deep legacy monolithic codebases. Tree-sitter AST chunking natively handles C, C++, Java, and Python. Seamlessly bridges legacy logic to modern documentation, all parsed locally without cloud APIs.</p>
           <div class="feat-chips">
             <span class="feat-chip">Rust</span>
             <span class="feat-chip">Python</span>
@@ -1922,9 +2607,9 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
             <span class="out"># Build from source (requires Rust 1.75+):</span><br>
             <span class="prompt">$</span> <span class="cmd">cargo install --git https://github.com/somil71/needle</span><br>
             <span class="out"># or download prebuilt binary from GitHub releases:</span><br>
-            <span class="prompt">$</span> <span class="cmd">chmod +x needle &amp;&amp; sudo mv needle /usr/local/bin/</span><br>
-            <span class="prompt">$</span> <span class="cmd">needle --version</span><br>
-            <span class="out">needle 0.1.0</span>
+            <span class="prompt">$</span> <span class="cmd">chmod +x sentinel &amp;&amp; sudo mv sentinel /usr/local/bin/</span><br>
+            <span class="prompt">$</span> <span class="cmd">sentinel --version</span><br>
+            <span class="out">Sentinel 0.1.0</span>
           </div>
         </div>
 
@@ -1934,11 +2619,11 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
             <h3>Index your project</h3>
           </div>
           <div class="terminal-mock">
-            <span class="prompt">$</span> <span class="cmd">needle init ./my-project</span><br>
+            <span class="prompt">$</span> <span class="cmd">sentinel init ./my-project</span><br>
             <span class="out">Scanning 847 files...</span><br>
             <span class="out">Building AST chunks...  12,340 done</span><br>
             <span class="out">Building HNSW index...  done</span><br>
-            <span class="prompt">$</span> <span class="cmd">needle serve</span><br>
+            <span class="prompt">$</span> <span class="cmd">sentinel serve</span><br>
             <span class="out">Listening on <a style="color:#818cf8">http://localhost:7700</a></span>
           </div>
         </div>
@@ -1950,7 +2635,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           </div>
           <div class="terminal-mock">
             <span class="out"># Claude Code (one command):</span><br>
-            <span class="prompt">$</span> <span class="cmd">claude mcp add needle needle mcp</span><br>
+            <span class="prompt">$</span> <span class="cmd">claude mcp add sentinel sentinel mcp</span><br>
             <span class="out">✓ MCP server registered</span><br>
             <span class="out"># Cursor / Windsurf / Copilot:</span><br>
             <span class="out"># Add {"mcpServers":{"needle":{"command":"needle","args":["mcp"]}}}</span><br>
@@ -2004,7 +2689,7 @@ html.light .demo-badge.both { color: #065F46; background: rgba(16,185,129,0.08);
           <div class="ptab-content">
             <div class="ptab-grid">
               <div class="ptab-info">
-                <h3>Run Needle locally</h3>
+                <h3>Run Sentinel locally</h3>
                 <p>Download the prebuilt binary, index your project, and open the web UI — all in one process. The index stays on your machine at <code>~/.needle/</code>.</p>
                 <div class="pstep-list">
                   <div class="pstep">
@@ -2023,14 +2708,14 @@ sudo cp target/release/needle /usr/local/bin/</code></pre><button class="copy-bt
                     <div>
                       <h4>Index a directory</h4>
                       <p>Scans files, builds BM25 + HNSW indexes, extracts the call graph.</p>
-                      <div class="code-copy"><pre><code>needle init ~/code/my-project</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel init ~/code/my-project</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
                   </div>
                   <div class="pstep">
                     <div class="pstep-num">3</div>
                     <div>
                       <h4>Open the web UI</h4>
-                      <div class="code-copy"><pre><code>needle serve --port 7700</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel serve --port 7700</code></pre><button class="copy-btn">Copy</button></div>
                       <p>Navigate to <code>http://localhost:7700</code> — this page.</p>
                     </div>
                   </div>
@@ -2038,20 +2723,20 @@ sudo cp target/release/needle /usr/local/bin/</code></pre><button class="copy-bt
               </div>
               <div class="ptab-terminal">
                 <div class="t-comment"># Full local workflow</div>
-                <div><span class="t-prompt">$ </span><span class="t-cmd">needle init ./my-repo</span></div>
+                <div><span class="t-prompt">$ </span><span class="t-cmd">sentinel init ./my-repo</span></div>
                 <div class="t-out">Scanning files... 847 found</div>
                 <div class="t-out">Chunking (tree-sitter)... 12,340 chunks</div>
                 <div class="t-out">Building BM25 index...    done</div>
                 <div class="t-out">Building HNSW index...    done</div>
                 <div class="t-out">Extracting call graph...  364 nodes, 548 edges</div>
-                <div class="t-out">Index written to ~/.needle/index/</div>
+                <div class="t-out">Index written to ~/.sentinel/index/</div>
                 <br>
-                <div><span class="t-prompt">$ </span><span class="t-cmd">needle status</span></div>
-                <div class="t-out">Needle 0.1.0 — index status</div>
+                <div><span class="t-prompt">$ </span><span class="t-cmd">sentinel status</span></div>
+                <div class="t-out">Sentinel 0.1.0 — index status</div>
                 <div class="t-out">&nbsp; Chunks: 12,340 active · 0 tombstoned</div>
                 <div class="t-out">&nbsp; Files:  847 &nbsp;·&nbsp; Disk: 24.1 MB</div>
                 <br>
-                <div><span class="t-prompt">$ </span><span class="t-cmd">needle serve</span></div>
+                <div><span class="t-prompt">$ </span><span class="t-cmd">sentinel serve</span></div>
                 <div class="t-url">http://localhost:7700</div>
               </div>
             </div>
@@ -2064,29 +2749,29 @@ sudo cp target/release/needle /usr/local/bin/</code></pre><button class="copy-bt
             <div class="ptab-grid">
               <div class="ptab-info">
                 <h3>CLI command reference</h3>
-                <p>All features are available without the web UI. Use Needle as a pure terminal tool in scripts, CI, or headless environments.</p>
+                <p>All features are available without the web UI. Use Sentinel as a pure terminal tool in scripts, CI, or headless environments.</p>
                 <div class="pstep-list">
                   <div class="pstep">
                     <div class="pstep-num">1</div>
                     <div>
                       <h4>Search from the terminal</h4>
-                      <div class="code-copy"><pre><code>needle search "authentication handler" --lang rs
-needle search "retry HTTP" --limit 20</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel search "authentication handler" --lang rs
+sentinel search "retry HTTP" --limit 20</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
                   </div>
                   <div class="pstep">
                     <div class="pstep-num">2</div>
                     <div>
                       <h4>Generate the call graph</h4>
-                      <div class="code-copy"><pre><code>needle graph              # opens in browser
-needle graph -o graph.html  # save standalone file</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel graph              # opens in browser
+sentinel graph -o graph.html  # save standalone file</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
                   </div>
                   <div class="pstep">
                     <div class="pstep-num">3</div>
                     <div>
                       <h4>Write an architecture report</h4>
-                      <div class="code-copy"><pre><code>needle report -o GRAPH_REPORT.md</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel report -o GRAPH_REPORT.md</code></pre><button class="copy-btn">Copy</button></div>
                       <p>Outputs god nodes, communities, and surprise edges as Markdown.</p>
                     </div>
                   </div>
@@ -2094,14 +2779,14 @@ needle graph -o graph.html  # save standalone file</code></pre><button class="co
                     <div class="pstep-num">4</div>
                     <div>
                       <h4>Run as MCP server</h4>
-                      <div class="code-copy"><pre><code>needle mcp   # stdio transport, used by AI tools</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>sentinel mcp   # stdio transport, used by AI tools</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
                   </div>
                 </div>
               </div>
               <div class="ptab-terminal">
                 <div class="t-comment"># Full command list</div>
-                <div><span class="t-prompt">$ </span><span class="t-cmd">needle --help</span></div>
+                <div><span class="t-prompt">$ </span><span class="t-cmd">sentinel --help</span></div>
                 <div class="t-out">Commands:</div>
                 <div class="t-out">  init      Build the search index for one or more dirs</div>
                 <div class="t-out">  search    Hybrid keyword + semantic search</div>
@@ -2125,28 +2810,28 @@ needle graph -o graph.html  # save standalone file</code></pre><button class="co
             <div class="ptab-grid">
               <div class="ptab-info">
                 <h3>VS Code extension</h3>
-                <p>The Needle VS Code extension adds a sidebar panel, inline search, and wires up the MCP server automatically — no separate terminal needed.</p>
+                <p>The Sentinel VS Code extension adds a sidebar panel, inline search, and wires up the MCP server automatically — no separate terminal needed.</p>
                 <div class="pstep-list">
                   <div class="pstep">
                     <div class="pstep-num">1</div>
                     <div>
                       <h4>Install the extension</h4>
                       <p>Download <strong>needle-search-0.5.0.vsix</strong> from the <a href="#/download" onclick="nav('download')">releases page</a> and install it:</p>
-                      <div class="code-copy"><pre><code>code --install-extension needle-search-0.5.0.vsix</code></pre><button class="copy-btn">Copy</button></div>
+                      <div class="code-copy"><pre><code>code --install-extension sentinel-search-0.5.0.vsix</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
                   </div>
                   <div class="pstep">
                     <div class="pstep-num">2</div>
                     <div>
                       <h4>Open your workspace</h4>
-                      <p>The extension auto-detects <code>~/.needle/index/</code>. If no index exists, it prompts you to run <code>needle init</code>.</p>
+                      <p>The extension auto-detects <code>~/.sentinel/index/</code>. If no index exists, it prompts you to run <code>sentinel init</code>.</p>
                     </div>
                   </div>
                   <div class="pstep">
                     <div class="pstep-num">3</div>
                     <div>
                       <h4>Enable MCP for Copilot</h4>
-                      <p>In VS Code settings, add Needle to your MCP servers configuration for GitHub Copilot Chat:</p>
+                      <p>In VS Code settings, add Sentinel to your MCP servers configuration for GitHub Copilot Chat:</p>
                       <div class="code-copy"><pre><code>// .vscode/settings.json
 {
   "github.copilot.chat.mcp.servers": {
@@ -2174,7 +2859,7 @@ needle graph -o graph.html  # save standalone file</code></pre><button class="co
                 <div class="t-out">}</div>
                 <br>
                 <div class="t-comment"># Claude Code (one command)</div>
-                <div><span class="t-prompt">$ </span><span class="t-cmd">claude mcp add needle needle mcp</span></div>
+                <div><span class="t-prompt">$ </span><span class="t-cmd">claude mcp add sentinel sentinel mcp</span></div>
                 <div class="t-out">✓ MCP server "needle" registered</div>
                 <br>
                 <div class="t-comment"># Gemini CLI / Codex CLI</div>
@@ -2190,13 +2875,13 @@ needle graph -o graph.html  # save standalone file</code></pre><button class="co
             <div class="ptab-grid">
               <div class="ptab-info">
                 <h3>Deploy to the cloud</h3>
-                <p>Self-host Needle on Railway, Render, or any Docker host. The cloud mode adds GitHub OAuth, per-user API keys, and a shared index over multiple repos.</p>
+                <p>Self-host Sentinel on Railway, Render, or any Docker host. The cloud mode adds GitHub OAuth, per-user API keys, and a shared index over multiple repos.</p>
                 <div class="pstep-list">
                   <div class="pstep">
                     <div class="pstep-num">1</div>
                     <div>
                       <h4>Build the Docker image</h4>
-                      <div class="code-copy"><pre><code>docker build -t needle .
+                      <div class="code-copy"><pre><code>docker build -t sentinel .
 docker run -p 8080:8080 \
   -v needle_data:/data needle</code></pre><button class="copy-btn">Copy</button></div>
                     </div>
@@ -2256,8 +2941,8 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           <div class="pillar-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <h4>Your code never leaves</h4>
-          <p>Index lives in <code>~/.needle/</code>. No telemetry, no analytics, no servers. Fully offline.</p>
+          <h4>Government Grade Privacy</h4>
+          <p>Index lives locally. Built for companies and organizations that cannot put their code online. No telemetry, no cloud.</p>
         </div>
         <div class="pillar">
           <div class="pillar-icon">
@@ -2297,7 +2982,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
             <svg class="faq-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-a">
-            <p><strong>No — never.</strong> Needle runs entirely on your machine. The index is built locally and stored in <code>~/.needle/index/</code>. The web UI is served by a local process on <code>localhost:7700</code>. No file content, metadata, or telemetry is sent anywhere.</p>
+            <p><strong>No — never.</strong> Sentinel runs entirely on your machine. The index is built locally and stored in <code>~/.sentinel/index/</code>. The web UI is served by a local process on <code>localhost:7700</code>. No file content, metadata, or telemetry is sent anywhere.</p>
             <p>The only time network traffic occurs is if you use the <em>Ask</em> feature and have an API key configured for an external LLM (Claude, OpenAI, Groq). In that case, only your question and the retrieved code snippets are sent to that provider — and only when you click Ask.</p>
           </div>
         </div>
@@ -2323,7 +3008,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
             <svg class="faq-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-a">
-            <p>Needle uses Tree-sitter grammars for AST-aware chunking across 8 languages:</p>
+            <p>Sentinel uses Tree-sitter grammars for AST-aware chunking across 8 languages:</p>
             <ul>
               <li><strong>Rust</strong> — functions, structs, impls, traits</li>
               <li><strong>Python</strong> — functions, classes, methods</li>
@@ -2343,8 +3028,8 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
             <svg class="faq-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-a">
-            <p>MCP (Model Context Protocol) is a standard that lets AI tools call external tools. Running <code>needle mcp</code> starts a stdio MCP server that exposes 11 tools to any compatible AI client.</p>
-            <p>For <strong>Claude Code</strong>: <code>claude mcp add needle needle mcp</code></p>
+            <p>MCP (Model Context Protocol) is a standard that lets AI tools call external tools. Running <code>sentinel mcp</code> starts a stdio MCP server that exposes 20+ tools (AST search, Compliance, Ledger) to any compatible AI client.</p>
+            <p>For <strong>Claude Code</strong>: <code>claude mcp add sentinel sentinel mcp</code></p>
             <p>For <strong>Cursor / Windsurf</strong>: add <code>{"mcpServers": {"needle": {"command": "needle", "args": ["mcp"]}}}</code> to <code>.cursor/mcp.json</code> or <code>.windsurf/mcp.json</code></p>
             <p>For <strong>VS Code Copilot</strong>: add to <code>.vscode/settings.json</code> under <code>github.copilot.chat.mcp.servers</code>.</p>
           </div>
@@ -2356,13 +3041,13 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
             <svg class="faq-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-a">
-            <p>During indexing, Needle runs a multi-pass graph extraction over your source files:</p>
+            <p>During indexing, Sentinel runs a multi-pass graph extraction over your source files:</p>
             <ul>
               <li><strong>Pass 1 — definition extraction</strong>: finds every function, method, class, struct, trait, and module.</li>
               <li><strong>Pass 1.5 — endpoint detection</strong>: finds Axum <code>.route()</code>, Express <code>app.get()</code>, etc. and promotes matching functions to endpoint nodes.</li>
               <li><strong>Pass 2 — call/import extraction</strong>: finds every function call, import, and use-statement, resolving them to the nodes found in Pass 1.</li>
             </ul>
-            <p>The resulting graph has nodes (functions, classes, endpoints, modules) and directed edges (calls, imports, contains). The web UI renders it with D3 force simulation across 10 layout modes: Graph, 3D (orbit with Space to toggle auto-rotate), Cluster, Radial, Treemap, Bundle, Flow (Sankey), Matrix, Tree, and Block. Click any node to see its <strong>callers</strong> and <strong>callees</strong> split into separate panels, with non-adjacent nodes dimmed so you can trace the call path clearly. You can also export the graph with <code>needle graph</code>.</p>
+            <p>The resulting graph has nodes (functions, classes, endpoints, modules) and directed edges (calls, imports, contains). The web UI renders it with D3 force simulation across 10 layout modes: Graph, 3D (orbit with Space to toggle auto-rotate), Cluster, Radial, Treemap, Bundle, Flow (Sankey), Matrix, Tree, and Block. Click any node to see its <strong>callers</strong> and <strong>callees</strong> split into separate panels, with non-adjacent nodes dimmed so you can trace the call path clearly. You can also export the graph with <code>sentinel graph</code>.</p>
           </div>
         </div>
 
@@ -2373,7 +3058,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           </button>
           <div class="faq-a">
             <p>No — all search, graph, and report features work completely offline with no API keys. The <strong>Ask</strong> feature (RAG over LLM) is the only thing that needs one.</p>
-            <p>Needle checks for API keys in this priority order: <code>ANTHROPIC_API_KEY</code> → <code>OPENAI_API_KEY</code> → <code>GROQ_API_KEY</code> → local Ollama (no key needed). If none are set, the Ask tab shows a message to configure one.</p>
+            <p>Sentinel checks for API keys in this priority order: <code>ANTHROPIC_API_KEY</code> → <code>OPENAI_API_KEY</code> → <code>GROQ_API_KEY</code> → local Ollama (no key needed). If none are set, the Ask tab shows a message to configure one.</p>
           </div>
         </div>
 
@@ -2383,7 +3068,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
             <svg class="faq-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-a">
-            <p>Needle is designed for codebases of 10k–500k chunks (roughly 1,000–50,000 source files). Query latency stays under 50ms (p50) because both indexes are memory-mapped and never hit disk during search.</p>
+            <p>Sentinel is designed for codebases of 10k–500k chunks (roughly 1,000–50,000 source files). Query latency stays under 50ms (p50) because both indexes are memory-mapped and never hit disk during search.</p>
             <p>Memory usage: roughly 2–3 MB per 1,000 chunks for the HNSW index, plus ~300 KB per 1,000 chunks for BM25 postings. A 100k-chunk codebase uses ~300 MB RAM total — well within modern laptops.</p>
           </div>
         </div>
@@ -2395,7 +3080,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           </button>
           <div class="faq-a">
             <p>A god node is a symbol (function, module, class) with unusually high degree in the call graph — many other things depend on it. In Needle's own codebase, <code>graph/mod.rs</code> has degree 51, meaning 51 other nodes call or import it directly.</p>
-            <p>God nodes are architectural load-bearers: changing them has the widest blast radius. They're the first thing to review when refactoring, and the last thing you want as a cyclic dependency. <code>needle report</code> ranks them by degree so you can see them at a glance.</p>
+            <p>God nodes are architectural load-bearers: changing them has the widest blast radius. They're the first thing to review when refactoring, and the last thing you want as a cyclic dependency. <code>sentinel report</code> ranks them by degree so you can see them at a glance.</p>
           </div>
         </div>
 
@@ -2407,7 +3092,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
       <div class="about-grid">
         <div class="about-left">
           <h2>Built by a developer, for developers.</h2>
-          <p>Most code search tools are cloud-dependent, shallow, or both. Needle is a single binary — no server, no upload, no vendor. It builds a real HNSW vector index, parses ASTs with tree-sitter, and runs hybrid BM25 + semantic search entirely on your hardware.</p>
+          <p>Most code search tools are cloud-dependent, shallow, or both. Sentinel is a single binary — no server, no upload, no vendor. It builds a real HNSW vector index, parses ASTs with tree-sitter, and runs hybrid BM25 + semantic search entirely on your hardware.</p>
           <p>Plug it into any AI tool as an MCP server. Your code never leaves.</p>
           <a class="about-star-btn" href="https://github.com/somil71/NEEDLE" target="_blank" rel="noopener">
             ⭐ Star on GitHub
@@ -2465,13 +3150,12 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
       <div class="footer-inner">
         <div class="footer-brand">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-            <svg class="needle-logo-icon" width="14" height="18" viewBox="0 0 18 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <ellipse cx="9" cy="5" rx="4" ry="4.5" stroke="currentColor" stroke-width="2"/>
-              <ellipse cx="9" cy="5" rx="1.5" ry="1.8" fill="currentColor" opacity="0.3"/>
-              <rect x="8" y="9" width="2" height="13" rx="1" fill="currentColor"/>
-              <path d="M7 22 L9 27 L11 22 Z" fill="currentColor"/>
-            </svg>
-            <span class="footer-logo">Needle</span>
+            <svg class="sentinel-logo-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" fill="var(--accent-subtle)"></polygon>
+  <polyline points="12 22 12 12 22 8.5"></polyline>
+  <polyline points="2 8.5 12 12"></polyline>
+</svg>
+            <span class="footer-logo">Sentinel</span>
           </div>
           <span class="footer-tagline">Local-first code search &amp; graph analysis.<br>No cloud. No telemetry. MIT license.</span>
         </div>
@@ -2513,6 +3197,175 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
       </div>
     </div>
   </footer>
+
+</div>
+
+
+<!-- ══════════════════════════════════════════════════ -->
+<!-- PAGE: SENTINEL                                     -->
+<!-- ══════════════════════════════════════════════════ -->
+<div id="page-sentinel" class="page" style="padding: 28px; max-width: 1320px; margin: 0 auto;">
+  <div class="nav-tabs" style="display:flex; margin-bottom: 20px;">
+    <button class="nav-tab active" onclick="showPageSentinel('dashboard', this)">Dashboard</button>
+    <button class="nav-tab" onclick="showPageSentinel('audit', this)">Compliance Audit</button>
+    <button class="nav-tab" onclick="showPageSentinel('ledger', this)">Audit Ledger</button>
+    <button class="nav-tab" onclick="showPageSentinel('doctor', this)">System Health</button>
+  </div>
+  
+
+  <!-- ── DASHBOARD PAGE ─────────────────────────────────────────────────── -->
+  <div class="spage active" id="page-dashboard">
+    <div class="stat-grid" id="stat-grid">
+      <div class="stat-card accent-blue">
+        <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--blue)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <div class="stat-value" id="stat-policies">—</div>
+        <div class="stat-label">Policies Ingested</div>
+      </div>
+      <div class="stat-card accent-green">
+        <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+        <div class="stat-value" id="stat-satisfied">—</div>
+        <div class="stat-label">Obligations Satisfied</div>
+      </div>
+      <div class="stat-card accent-red">
+        <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--red)"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>
+        <div class="stat-value" id="stat-violated">—</div>
+        <div class="stat-label">Violations Found</div>
+      </div>
+      <div class="stat-card accent-amber">
+        <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--orange)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+        <div class="stat-value" id="stat-gaps">—</div>
+        <div class="stat-label">Coverage Gaps</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#A78BFA"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></div>
+        <div class="stat-value" id="stat-blocks">—</div>
+        <div class="stat-label">Ledger Blocks</div>
+      </div>
+    </div>
+
+    <div class="score-ring-wrap">
+      <div class="score-ring-card">
+        <svg class="ring-svg" viewBox="0 0 100 100">
+          <circle class="ring-bg" cx="50" cy="50" r="40"/>
+          <circle class="ring-fg" id="ring-fg" cx="50" cy="50" r="40"
+            stroke="#22C55E"
+            stroke-dasharray="251.2"
+            stroke-dashoffset="251.2"/>
+          <text x="50" y="46" text-anchor="middle" class="ring-label" id="ring-pct">—</text>
+          <text x="50" y="58" text-anchor="middle" class="ring-sub">COMPLIANT</text>
+        </svg>
+        <div class="score-details">
+          <h3>Overall Compliance Score</h3>
+          <p id="score-summary">Run an audit to compute the compliance score across all ingested policies.</p>
+          <div class="progress-bar-wrap" style="width:220px">
+            <div class="progress-bar" id="score-bar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>Recent Audit Activity</h2>
+    </div>
+    <div id="dashboard-activity">
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <h3>No audit run yet</h3>
+        <p>Go to <strong>Compliance Audit</strong> tab and run an audit to see results here.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── AUDIT PAGE ─────────────────────────────────────────────────────── -->
+  <div class="spage" id="page-audit">
+    <div class="action-bar">
+      <button class="btn btn-primary" id="run-audit-btn" onclick="runAudit()">
+        <span>▶</span> Run Audit
+      </button>
+      <button class="btn btn-secondary" onclick="loadPolicies()">
+        <span>↻</span> Refresh Policies
+      </button>
+      <button class="btn btn-outline" id="add-policy-btn" onclick="showUploadDialog()">
+        <span>＋</span> Add Policy
+      </button>
+      <button class="btn btn-success" id="sign-ledger-btn" onclick="signToLedger()" disabled>
+        <span>🔐</span> Sign to Ledger
+      </button>
+    </div>
+
+    <!-- Upload modal -->
+    <div id="upload-modal" class="modal" style="display:none">
+      <div class="modal-content">
+        <h3>Upload Policy</h3>
+        <input type="file" id="policy-file-input" accept=".md,.txt,.pdf,.policy" />
+        <input type="text" id="policy-name-input" placeholder="Optional policy name" />
+        <div style="margin-top:10px">
+          <button class="btn btn-primary" onclick="uploadPolicy()">Upload</button>
+          <button class="btn btn-secondary" onclick="hideUploadDialog()">Cancel</button>
+        </div>
+        <div id="upload-result" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <!-- Policy List Container -->
+    <div id="policy-list-container" style="margin-top: 20px; margin-bottom: 20px;">
+        <p style="color: var(--text-2);">Click 'Refresh Policies' to view ingested policies.</p>
+    </div>
+
+    <div class="search-wrap">
+      <span class="search-icon">🔎</span>
+      <input class="search-input" id="audit-search" type="text" placeholder="Filter by obligation title, clause, or severity…" oninput="filterAudit(this.value)">
+    </div>
+
+    <div id="audit-results">
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <h3>Ready to audit</h3>
+        <p>Click <strong>Run Audit</strong> to link policy obligations to code evidence.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LEDGER PAGE ────────────────────────────────────────────────────── -->
+  <div class="spage" id="page-ledger">
+    <div class="action-bar">
+      <button class="btn btn-primary" onclick="verifyLedger()">
+        <span>🔍</span> Verify Chain
+      </button>
+      <button class="btn btn-secondary" onclick="loadLedger()">
+        <span>↻</span> Refresh
+      </button>
+    </div>
+    <div id="ledger-verify-result"></div>
+    <div class="section-header">
+      <h2>Audit Chain</h2>
+      <span id="ledger-count"></span>
+    </div>
+    <div id="ledger-blocks">
+      <div class="empty-state">
+        <div class="empty-icon">🔗</div>
+        <h3>Ledger is empty</h3>
+        <p>Run <code>sentinel ledger keygen</code> then use <strong>Sign to Ledger</strong> after an audit.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DOCTOR PAGE ────────────────────────────────────────────────────── -->
+  <div class="spage" id="page-doctor">
+    <div class="action-bar">
+      <button class="btn btn-primary" onclick="runDoctor()">
+        <span>🩺</span> Run Diagnostics
+      </button>
+    </div>
+    <div class="doctor-grid" id="doctor-grid">
+      <div class="empty-state" style="grid-column:1/-1">
+        <div class="empty-icon">🩺</div>
+        <h3>Not yet run</h3>
+        <p>Click <strong>Run Diagnostics</strong> to check sovereign mode, LLM routing, and ledger integrity.</p>
+      </div>
+    </div>
+  </div>
+
 
 </div>
 
@@ -2574,7 +3427,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
     <!-- Ask tab -->
     <div id="tab-ask" class="stab-panel">
       <div id="ask-wrap">
-        <p style="margin-bottom:16px;font-size:0.9375rem;">Ask a question about your codebase. Needle retrieves relevant context and passes it to a local or cloud LLM.</p>
+        <p style="margin-bottom:16px;font-size:0.9375rem;">Ask a question about your codebase. Sentinel retrieves relevant context and passes it to a local or cloud LLM.</p>
         <textarea id="ask-input" placeholder="How does the authentication flow work? What does the render function do? Where is X configured?"></textarea>
         <div class="ask-actions">
           <select id="ask-context-select">
@@ -2619,7 +3472,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
 <div id="page-index" class="page">
   <div class="container">
     <h1>Index</h1>
-    <p style="margin-bottom:36px;">What Needle has indexed, and how the index is built.</p>
+    <p style="margin-bottom:36px;">What Sentinel has indexed, and how the index is built.</p>
 
     <div class="stats-grid" id="stats-grid">
       <div class="stat-card">
@@ -2709,7 +3562,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
             <h3>Download</h3>
-            <p>Download <strong>Needle_0.1.0_x64-setup.exe</strong> from the <a href="#/download" onclick="nav('download')">releases page</a> and run the installer.</p>
+            <p>Download <strong>Sentinel_0.1.0_x64-setup.exe</strong> from the <a href="#/download" onclick="nav('download')">releases page</a> and run the installer.</p>
           </div>
         </div>
         <div class="setup-step">
@@ -2723,7 +3576,7 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           <div class="setup-step-num">3</div>
           <div class="setup-step-body">
             <h3>Check it works</h3>
-            <div class="code-copy"><pre><code>needle --version</code></pre><button class="copy-btn">Copy</button></div>
+            <div class="code-copy"><pre><code>sentinel --version</code></pre><button class="copy-btn">Copy</button></div>
           </div>
         </div>
       </div>
@@ -2734,16 +3587,16 @@ BASE_URL=https://your-domain.com</code></pre><button class="copy-btn">Copy</butt
           <div class="setup-step-body">
             <h3>Download</h3>
             <p>Get the right binary from the <a href="#/download" onclick="nav('download')">releases page</a>:<br>
-            <strong>needle-macos-arm64</strong> — M1/M2/M3 Mac<br>
-            <strong>needle-macos-x64</strong> — older Intel Mac</p>
+            <strong>sentinel-macos-arm64</strong> — M1/M2/M3 Mac<br>
+            <strong>sentinel-macos-x64</strong> — older Intel Mac</p>
           </div>
         </div>
         <div class="setup-step">
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Make it runnable and move it to PATH</h3>
-            <div class="code-copy"><pre><code>chmod +x needle-macos-arm64
-sudo mv needle-macos-arm64 /usr/local/bin/needle</code></pre><button class="copy-btn">Copy</button></div>
+            <div class="code-copy"><pre><code>chmod +x sentinel-macos-arm64
+sudo mv sentinel-macos-arm64 /usr/local/bin/needle</code></pre><button class="copy-btn">Copy</button></div>
             <p>If macOS blocks it ("unverified developer"), go to System Settings → Privacy &amp; Security → click Allow.</p>
           </div>
         </div>
@@ -2751,7 +3604,7 @@ sudo mv needle-macos-arm64 /usr/local/bin/needle</code></pre><button class="copy
           <div class="setup-step-num">3</div>
           <div class="setup-step-body">
             <h3>Check it works</h3>
-            <div class="code-copy"><pre><code>needle --version</code></pre><button class="copy-btn">Copy</button></div>
+            <div class="code-copy"><pre><code>sentinel --version</code></pre><button class="copy-btn">Copy</button></div>
           </div>
         </div>
       </div>
@@ -2761,16 +3614,16 @@ sudo mv needle-macos-arm64 /usr/local/bin/needle</code></pre><button class="copy
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
             <h3>Download &amp; install</h3>
-            <p>Get <strong>needle-linux-x64</strong> from the <a href="#/download" onclick="nav('download')">releases page</a>. It's a static binary — no dependencies needed.</p>
-            <div class="code-copy"><pre><code>chmod +x needle-linux-x64
-sudo mv needle-linux-x64 /usr/local/bin/needle</code></pre><button class="copy-btn">Copy</button></div>
+            <p>Get <strong>sentinel-linux-x64</strong> from the <a href="#/download" onclick="nav('download')">releases page</a>. It's a static binary — no dependencies needed.</p>
+            <div class="code-copy"><pre><code>chmod +x sentinel-linux-x64
+sudo mv sentinel-linux-x64 /usr/local/bin/needle</code></pre><button class="copy-btn">Copy</button></div>
           </div>
         </div>
         <div class="setup-step">
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Check it works</h3>
-            <div class="code-copy"><pre><code>needle --version</code></pre><button class="copy-btn">Copy</button></div>
+            <div class="code-copy"><pre><code>sentinel --version</code></pre><button class="copy-btn">Copy</button></div>
           </div>
         </div>
       </div>
@@ -2796,13 +3649,13 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
     <!-- ── STEP 2: INDEX ──────────────────────────────────────── -->
     <div class="setup-section">
       <h2>2 — Index your project</h2>
-      <p>Point Needle at a folder. It reads every file, builds a searchable index, and saves it locally. Nothing leaves your machine.</p>
+      <p>Point Sentinel at a folder. It reads every file, builds a searchable index, and saves it locally. Nothing leaves your machine.</p>
 
       <div class="setup-step">
         <div class="setup-step-num">1</div>
         <div class="setup-step-body">
-          <h3>Run needle init</h3>
-          <div class="code-copy"><pre><code>needle init ./my-project</code></pre><button class="copy-btn">Copy</button></div>
+          <h3>Run sentinel init</h3>
+          <div class="code-copy"><pre><code>sentinel init ./my-project</code></pre><button class="copy-btn">Copy</button></div>
           <p>Takes 10–60 seconds depending on project size. You'll see a progress bar while it works.</p>
         </div>
       </div>
@@ -2811,7 +3664,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
         <div class="setup-step-num">2</div>
         <div class="setup-step-body">
           <h3>Start searching</h3>
-          <div class="code-copy"><pre><code>needle serve</code></pre><button class="copy-btn">Copy</button></div>
+          <div class="code-copy"><pre><code>sentinel serve</code></pre><button class="copy-btn">Copy</button></div>
           <p>Opens this UI at <code>http://localhost:7700</code>. Keep this running while you work.</p>
         </div>
       </div>
@@ -2849,14 +3702,14 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
             <h3>Run this once in your terminal</h3>
-            <div class="code-copy"><pre><code>claude mcp add needle needle mcp</code></pre><button class="copy-btn">Copy</button></div>
+            <div class="code-copy"><pre><code>claude mcp add sentinel sentinel mcp</code></pre><button class="copy-btn">Copy</button></div>
           </div>
         </div>
         <div class="setup-step">
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Restart Claude Code</h3>
-            <p>That's it. Try asking: <em>"search for authentication logic"</em> — Claude will call Needle directly instead of guessing.</p>
+            <p>That's it. Try asking: <em>"search for authentication logic"</em> — Claude will call Sentinel directly instead of guessing.</p>
           </div>
         </div>
       </div>
@@ -2883,14 +3736,14 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Restart Cursor</h3>
-            <p>Cursor picks up <code>.cursor/mcp.json</code> automatically. You'll see Needle listed under MCP tools in Settings → Features → MCP.</p>
+            <p>Cursor picks up <code>.cursor/mcp.json</code> automatically. You'll see Sentinel listed under MCP tools in Settings → Features → MCP.</p>
           </div>
         </div>
       </div>
 
       <!-- Windsurf -->
       <div class="sel-panel" data-agent="windsurf">
-        <div class="what-it-does">Windsurf's Cascade can call Needle when it wants to find functions, callers, or endpoints in your project.</div>
+        <div class="what-it-does">Windsurf's Cascade can call Sentinel when it wants to find functions, callers, or endpoints in your project.</div>
         <div class="setup-step">
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
@@ -2910,14 +3763,14 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Restart Windsurf</h3>
-            <p>Needle will appear in the MCP tools list. Cascade will use it automatically when you ask about your codebase.</p>
+            <p>Sentinel will appear in the MCP tools list. Cascade will use it automatically when you ask about your codebase.</p>
           </div>
         </div>
       </div>
 
       <!-- VS Code Copilot -->
       <div class="sel-panel" data-agent="copilot">
-        <div class="what-it-does">GitHub Copilot Chat in VS Code can call Needle tools in agent mode — searching your local index instead of guessing from file names.</div>
+        <div class="what-it-does">GitHub Copilot Chat in VS Code can call Sentinel tools in agent mode — searching your local index instead of guessing from file names.</div>
         <div class="setup-step">
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
@@ -2938,14 +3791,14 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Enable agent mode in Copilot Chat</h3>
-            <p>Open Copilot Chat → switch to <strong>Agent</strong> mode → Needle tools appear automatically.</p>
+            <p>Open Copilot Chat → switch to <strong>Agent</strong> mode → Sentinel tools appear automatically.</p>
           </div>
         </div>
       </div>
 
       <!-- Gemini CLI -->
       <div class="sel-panel" data-agent="gemini">
-        <div class="what-it-does">Google's Gemini CLI supports MCP tools. Add Needle so Gemini can search your codebase directly from the terminal.</div>
+        <div class="what-it-does">Google's Gemini CLI supports MCP tools. Add Sentinel so Gemini can search your codebase directly from the terminal.</div>
         <div class="setup-step">
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
@@ -2965,14 +3818,14 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Start a new Gemini session</h3>
-            <p>Run <code>gemini</code> — Needle tools load automatically. Try: <em>"search for the login function"</em>.</p>
+            <p>Run <code>gemini</code> — Sentinel tools load automatically. Try: <em>"search for the login function"</em>.</p>
           </div>
         </div>
       </div>
 
       <!-- Codex CLI -->
       <div class="sel-panel" data-agent="codex">
-        <div class="what-it-does">OpenAI's Codex CLI picks up MCP servers from its config file. Needle gives it fast, local codebase search.</div>
+        <div class="what-it-does">OpenAI's Codex CLI picks up MCP servers from its config file. Sentinel gives it fast, local codebase search.</div>
         <div class="setup-step">
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
@@ -2995,7 +3848,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
 
       <!-- Continue.dev -->
       <div class="sel-panel" data-agent="continue">
-        <div class="what-it-does">Continue.dev's AI assistant can call Needle to search your codebase without loading files into context.</div>
+        <div class="what-it-does">Continue.dev's AI assistant can call Sentinel to search your codebase without loading files into context.</div>
         <div class="setup-step">
           <div class="setup-step-num">1</div>
           <div class="setup-step-body">
@@ -3019,7 +3872,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
             <h3>Reload Continue</h3>
-            <p>Open the Continue panel → click the reload icon. Needle tools appear under available context providers.</p>
+            <p>Open the Continue panel → click the reload icon. Sentinel tools appear under available context providers.</p>
           </div>
         </div>
       </div>
@@ -3043,15 +3896,15 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
         <div class="setup-step">
           <div class="setup-step-num">2</div>
           <div class="setup-step-body">
-            <h3>What Needle exposes</h3>
+            <h3>What Sentinel exposes</h3>
             <p>Your tool gets 11 tools: <strong>search_code</strong>, <strong>find_callers</strong>, <strong>find_callees</strong>, <strong>get_endpoints</strong>, <strong>get_file_structure</strong>, <strong>find_similar</strong>, <strong>get_stats</strong>, <strong>get_god_nodes</strong>, <strong>get_communities</strong>, <strong>get_surprises</strong>, <strong>explain</strong>.</p>
           </div>
         </div>
       </div>
 
       <div class="callout" style="margin-top:24px;">
-        <div class="callout-title">Make sure needle serve is running</div>
-        <p>The AI connection works by launching <code>needle mcp</code> in the background. Needle reads the index from <code>~/.needle/index/</code> — so you need to have run <code>needle init</code> first.</p>
+        <div class="callout-title">Make sure sentinel serve is running</div>
+        <p>The AI connection works by launching <code>sentinel mcp</code> in the background. Sentinel reads the index from <code>~/.sentinel/index/</code> — so you need to have run <code>sentinel init</code> first.</p>
       </div>
     </div>
 
@@ -3065,7 +3918,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
         <div class="setup-step-body">
           <h3>Download and install the .vsix</h3>
           <p>Download <strong>needle-search-0.5.0.vsix</strong> from the <a href="#/download" onclick="nav('download')">releases page</a>, then install it from the terminal:</p>
-          <div class="code-copy"><pre><code>code --install-extension needle-search-0.5.0.vsix</code></pre><button class="copy-btn">Copy</button></div>
+          <div class="code-copy"><pre><code>code --install-extension sentinel-search-0.5.0.vsix</code></pre><button class="copy-btn">Copy</button></div>
           <p>Or in VS Code: Extensions panel → <strong>⋯ menu</strong> → <em>Install from VSIX…</em></p>
         </div>
       </div>
@@ -3073,8 +3926,8 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
       <div class="setup-step">
         <div class="setup-step-num">2</div>
         <div class="setup-step-body">
-          <h3>Make sure needle serve is running</h3>
-          <div class="code-copy"><pre><code>needle serve</code></pre><button class="copy-btn">Copy</button></div>
+          <h3>Make sure sentinel serve is running</h3>
+          <div class="code-copy"><pre><code>sentinel serve</code></pre><button class="copy-btn">Copy</button></div>
           <p>The extension connects to <code>http://localhost:7700</code> by default. You'll see a status bar item at the bottom-right showing how many chunks are indexed.</p>
         </div>
       </div>
@@ -3083,7 +3936,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
         <div class="setup-step-num">3</div>
         <div class="setup-step-body">
           <h3>Start searching</h3>
-          <p>Click the Needle icon in the activity bar (left sidebar). Type to search — clicking a result opens the file at the exact line.</p>
+          <p>Click the Sentinel icon in the activity bar (left sidebar). Type to search — clicking a result opens the file at the exact line.</p>
           <p>For the knowledge graph: open the command palette (<code>Ctrl+Shift+P</code>) → <strong>Needle: Show Knowledge Graph</strong>.</p>
         </div>
       </div>
@@ -3114,7 +3967,7 @@ cargo install --path .</code></pre><button class="copy-btn">Copy</button></div>
 cd needle
 cargo build --release
 # Binary is at ./target/release/needle
-./target/release/needle serve</code></pre><button class="copy-btn">Copy</button></div>
+./target/release/sentinel serve</code></pre><button class="copy-btn">Copy</button></div>
       <div style="margin-top:16px;">
         <a class="btn btn-primary" href="https://github.com/somil71/needle" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -3140,8 +3993,8 @@ cargo build --release
         </div>
         <h3>Windows</h3>
         <p>64-bit installer. Windows 10 and 11. Double-click to install — no setup required.</p>
-        <pre><code>Needle_0.1.0_x64-setup.exe</code></pre>
-        <a class="btn btn-primary" href="https://github.com/somil71/NEEDLE/releases/download/v0.1.0/Needle_0.1.0_x64-setup.exe" target="_blank" rel="noopener">Download for Windows</a>
+        <pre><code>Sentinel_0.1.0_x64-setup.exe</code></pre>
+        <a class="btn btn-primary" href="https://github.com/somil71/NEEDLE/releases/download/v0.1.0/Sentinel_0.1.0_x64-setup.exe" target="_blank" rel="noopener">Download for Windows</a>
       </div>
 
       <div class="download-card" style="opacity:0.7;">
@@ -3152,8 +4005,8 @@ cargo build --release
         </div>
         <h3>macOS</h3>
         <p>Two builds — pick the right one for your Mac.</p>
-        <pre><code>needle-macos-arm64   # M1 / M2 / M3
-needle-macos-x64     # Intel</code></pre>
+        <pre><code>sentinel-macos-arm64   # M1 / M2 / M3
+sentinel-macos-x64     # Intel</code></pre>
         <a class="btn btn-ghost" href="https://github.com/somil71/needle/releases" target="_blank" rel="noopener">Watch for release →</a>
       </div>
 
@@ -3165,7 +4018,7 @@ needle-macos-x64     # Intel</code></pre>
         </div>
         <h3>Linux</h3>
         <p>Static musl binary. Works on any x86-64 distro, no glibc version requirement.</p>
-        <pre><code>needle-linux-x64</code></pre>
+        <pre><code>sentinel-linux-x64</code></pre>
         <a class="btn btn-ghost" href="https://github.com/somil71/needle/releases" target="_blank" rel="noopener">Watch for release →</a>
       </div>
 
@@ -3202,7 +4055,7 @@ needle-macos-x64     # Intel</code></pre>
       </div>
       <div>
         <h3>Local-only by design</h3>
-        <p>Needle has no accounts, no login, and no cloud sync. Your code stays on your machine. These settings are saved in your browser's localStorage — not on any server.</p>
+        <p>Sentinel has no accounts, no login, and no cloud sync. Your code stays on your machine. These settings are saved in your browser's localStorage — not on any server.</p>
       </div>
     </div>
 
@@ -3290,27 +4143,27 @@ needle-macos-x64     # Intel</code></pre>
 <div id="page-privacy" class="page">
   <div class="container" style="max-width:720px;">
     <h1>Privacy Policy</h1>
-    <p class="legal-meta">Effective date: June 2025 · Needle is a local-only tool.</p>
+    <p class="legal-meta">Effective date: June 2025 · Sentinel is a local-only tool.</p>
 
     <div class="legal-section">
       <h2>The short version</h2>
-      <p>Needle collects nothing. Your code never leaves your machine. There are no analytics, no telemetry, no accounts, and no servers controlled by the Needle project that your data touches.</p>
+      <p>Sentinel collects nothing. Your code never leaves your machine. There are no analytics, no telemetry, no accounts, and no servers controlled by the Sentinel project that your data touches.</p>
     </div>
 
     <div class="legal-section">
-      <h2>What data does Needle access?</h2>
-      <p>When you run <code>needle init</code>, Needle reads the source files in the directories you specify. It:</p>
+      <h2>What data does Sentinel access?</h2>
+      <p>When you run <code>sentinel init</code>, Sentinel reads the source files in the directories you specify. It:</p>
       <ul>
         <li>Chunks each file into smaller pieces</li>
         <li>Generates embeddings for each chunk (locally, via Ollama or hash-projection)</li>
-        <li>Stores the chunks, embeddings, and inverted index in a local directory on your disk (default: <code>~/.needle/index/</code>)</li>
+        <li>Stores the chunks, embeddings, and inverted index in a local directory on your disk (default: <code>~/.sentinel/index/</code>)</li>
       </ul>
       <p style="margin-top:12px;">None of this data is transmitted anywhere.</p>
     </div>
 
     <div class="legal-section">
       <h2>Ollama (optional)</h2>
-      <p>If you have Ollama running locally, Needle sends text to the local Ollama API at <code>http://localhost:11434</code> to generate embeddings and LLM responses. This is a local HTTP call — data does not leave your machine.</p>
+      <p>If you have Ollama running locally, Sentinel sends text to the local Ollama API at <code>http://localhost:11434</code> to generate embeddings and LLM responses. This is a local HTTP call — data does not leave your machine.</p>
     </div>
 
     <div class="legal-section">
@@ -3320,17 +4173,17 @@ needle-macos-x64     # Intel</code></pre>
 
     <div class="legal-section">
       <h2>Browser storage</h2>
-      <p>The Needle web UI stores your preferences (theme, search defaults, Ollama URL) in your browser's <code>localStorage</code>. This data is stored locally on your device and is not transmitted anywhere.</p>
+      <p>The Sentinel web UI stores your preferences (theme, search defaults, Ollama URL) in your browser's <code>localStorage</code>. This data is stored locally on your device and is not transmitted anywhere.</p>
     </div>
 
     <div class="legal-section">
       <h2>Telemetry</h2>
-      <p>Needle collects no usage analytics, crash reports, or telemetry of any kind. There is no tracking code in the binary or the UI.</p>
+      <p>Sentinel collects no usage analytics, crash reports, or telemetry of any kind. There is no tracking code in the binary or the UI.</p>
     </div>
 
     <div class="legal-section">
       <h2>Contact</h2>
-      <p>Needle is an open-source project. If you have questions, open an issue in the repository.</p>
+      <p>Sentinel is an open-source project. If you have questions, open an issue in the repository.</p>
     </div>
   </div>
 </div>
@@ -3345,37 +4198,37 @@ needle-macos-x64     # Intel</code></pre>
 
     <div class="legal-section">
       <h2>1. Overview</h2>
-      <p>Needle is an open-source, local-first code search tool. By using Needle, you agree to these terms. If you are using Needle within an organization, these terms apply to your use on behalf of that organization.</p>
+      <p>Sentinel is an open-source, local-first code search tool. By using Sentinel, you agree to these terms. If you are using Sentinel within an organization, these terms apply to your use on behalf of that organization.</p>
     </div>
 
     <div class="legal-section">
       <h2>2. Local tool — your responsibility</h2>
-      <p>Needle runs entirely on your machine. You are responsible for:</p>
+      <p>Sentinel runs entirely on your machine. You are responsible for:</p>
       <ul>
-        <li>Ensuring you have the right to index the files you point Needle at</li>
+        <li>Ensuring you have the right to index the files you point Sentinel at</li>
         <li>Not indexing files that contain credentials, secrets, or personally identifiable information you do not own</li>
-        <li>The security of your local machine and the index files Needle creates</li>
+        <li>The security of your local machine and the index files Sentinel creates</li>
       </ul>
     </div>
 
     <div class="legal-section">
       <h2>3. Third-party services</h2>
-      <p>If you configure optional third-party integrations (such as the Groq API), you are also bound by those services' terms. Needle itself does not operate any servers or APIs.</p>
+      <p>If you configure optional third-party integrations (such as the Groq API), you are also bound by those services' terms. Sentinel itself does not operate any servers or APIs.</p>
     </div>
 
     <div class="legal-section">
       <h2>4. No warranty</h2>
-      <p>Needle is provided "as is", without warranty of any kind, express or implied. The authors are not liable for any damages arising from the use of this software, including loss of data or confidentiality breaches resulting from misuse.</p>
+      <p>Sentinel is provided "as is", without warranty of any kind, express or implied. The authors are not liable for any damages arising from the use of this software, including loss of data or confidentiality breaches resulting from misuse.</p>
     </div>
 
     <div class="legal-section">
       <h2>5. Open source</h2>
-      <p>Needle's source code is available under the MIT license. You are free to use, modify, and distribute it in accordance with that license.</p>
+      <p>Sentinel's source code is available under the MIT license. You are free to use, modify, and distribute it in accordance with that license.</p>
     </div>
 
     <div class="legal-section">
       <h2>6. Changes to these terms</h2>
-      <p>These terms may be updated from time to time. Continued use of Needle after changes constitutes acceptance of the new terms.</p>
+      <p>These terms may be updated from time to time. Continued use of Sentinel after changes constitutes acceptance of the new terms.</p>
     </div>
   </div>
 </div>
@@ -3776,7 +4629,7 @@ needle-macos-x64     # Intel</code></pre>
         <img id="dash-avatar" src="" width="52" height="52" style="border-radius:50%;border:2px solid var(--border)">
         <div>
           <div style="font-weight:700;font-size:1.1rem" id="dash-username"></div>
-          <div style="color:var(--text-muted);font-size:.85rem">Needle account</div>
+          <div style="color:var(--text-muted);font-size:.85rem">Sentinel account</div>
         </div>
         <a href="/auth/logout" style="margin-left:auto;font-size:.85rem;color:var(--text-muted)">Sign out</a>
       </div>
@@ -3797,7 +4650,7 @@ needle-macos-x64     # Intel</code></pre>
         </div>
         <div id="dash-key-meta" style="margin-top:10px;display:flex;gap:16px;align-items:center;font-size:.78rem;color:var(--text-muted)"></div>
         <div style="margin-top:12px;background:var(--bg);border-radius:8px;padding:10px 14px;font-size:.8rem;color:var(--text-muted)">
-          CLI: <code style="background:#27272a;padding:2px 6px;border-radius:4px;color:#e4e4e7">NEEDLE_API_KEY=&lt;key&gt; needle init ./your-project</code>
+          CLI: <code style="background:#27272a;padding:2px 6px;border-radius:4px;color:#e4e4e7">SENTINEL_API_KEY=&lt;key&gt; sentinel init ./your-project</code>
         </div>
       </div>
 
@@ -3809,7 +4662,7 @@ needle-macos-x64     # Intel</code></pre>
         </div>
         <div id="dash-local-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px"></div>
         <div id="dash-local-hint" style="margin-top:16px;background:var(--bg);border-radius:8px;padding:14px;font-size:.85rem;color:var(--text-muted)">
-          Run <code style="background:#27272a;padding:2px 6px;border-radius:4px;color:#e4e4e7">needle init ./your-project</code> in your terminal to index a codebase. Your code never leaves this machine.
+          Run <code style="background:#27272a;padding:2px 6px;border-radius:4px;color:#e4e4e7">sentinel init ./your-project</code> in your terminal to index a codebase. Your code never leaves this machine.
         </div>
         <div id="dash-folder-status" style="display:none;margin-top:12px;font-size:.85rem;color:var(--text-muted)"></div>
       </div>
@@ -3827,7 +4680,7 @@ needle-macos-x64     # Intel</code></pre>
     </div>
 
     <div id="dash-auth" style="display:none;text-align:center;padding:80px 0">
-      <div style="font-size:1.5rem;font-weight:700;margin-bottom:12px">Sign in to Needle</div>
+      <div style="font-size:1.5rem;font-weight:700;margin-bottom:12px">Sign in to Sentinel</div>
       <div style="color:var(--text-muted);margin-bottom:32px">Create an account to use cloud search and manage your API key.</div>
       <a href="/auth/github" style="display:inline-flex;align-items:center;gap:10px;background:#24292e;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -3844,7 +4697,7 @@ needle-macos-x64     # Intel</code></pre>
         <button onclick="closeRepoModal()" style="background:#27272a;border:none;color:#a1a1aa;cursor:pointer;width:28px;height:28px;border-radius:6px;font-size:1rem;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
       <div style="background:#27272a;border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:.82rem;color:#a1a1aa;line-height:1.5">
-        Needle will clone and index this repo on the cloud. Your search stays on Needle's servers — only public repos or repos you explicitly authorize.
+        Sentinel will clone and index this repo on the cloud. Your search stays on Needle's servers — only public repos or repos you explicitly authorize.
       </div>
       <div id="repo-list-loading" style="color:#a1a1aa;padding:20px 0">Loading your repos…</div>
       <div id="repo-list" style="display:none"></div>
@@ -3992,10 +4845,9 @@ needle-macos-x64     # Intel</code></pre>
         <div style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-3)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         </div>
-        <input id="local-import-path" type="text" placeholder="/Users/you/projects/my-app  or  C:\code\my-app"
-          style="width:100%;padding:11px 12px 11px 36px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem;font-family:var(--mono);outline:none;box-sizing:border-box"
-          onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"
-          onkeydown="if(event.key==='Enter')startLocalImport()">
+        <input id="local-import-path" type="text" placeholder="Click 'Import' or click here to select a native directory..."
+          style="width:100%;padding:11px 12px 11px 36px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem;font-family:var(--mono);outline:none;box-sizing:border-box;cursor:pointer;"
+          readonly onclick="startLocalImport()">
       </div>
       <div style="padding:10px 12px;background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.2);border-radius:8px">
         <div style="font-size:.78rem;color:var(--text-2);font-weight:600;margin-bottom:4px">How it works</div>
@@ -4014,7 +4866,7 @@ needle-macos-x64     # Intel</code></pre>
         <span id="gh-import-pct" style="font-size:.78rem;color:var(--text-3);font-family:var(--mono)">0%</span>
       </div>
       <div style="height:6px;background:var(--surface-2);border-radius:99px;overflow:hidden">
-        <div id="gh-import-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#7C3AED,#6366F1);border-radius:99px;transition:width .4s ease"></div>
+        <div id="gh-import-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#6366F1);border-radius:99px;transition:width .4s ease"></div>
       </div>
       <div id="gh-import-msg" style="font-size:.75rem;color:var(--text-3);margin-top:6px;font-family:var(--mono)"></div>
     </div>
@@ -4054,7 +4906,579 @@ needle-macos-x64     # Intel</code></pre>
   border-radius:5px;color:var(--text-2);cursor:pointer;font-family:var(--mono);
   transition:background .12s,color .12s;
 }
-.gh-eg-btn:hover { background:rgba(124,58,237,.15);border-color:rgba(124,58,237,.4);color:var(--accent); }
+.gh-eg-btn:hover { background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--accent); }
+
+/* Sentinel Styles */
+.spage { display: none; }
+.spage.active { display: block; }
+
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { letter-spacing: 0.01em; -webkit-font-smoothing: antialiased; }
+
+:root {
+  --bg:            #0f1115;
+  --surface:       #16181d;
+  --surface-2:     #1c1f26;
+  --surface-3:     #242831;
+  --border:        rgba(255,255,255,0.1);
+  --border-bright: rgba(255,255,255,0.13);
+  --accent:        #3b82f6;
+  --accent-hover:  #2563eb;
+  --accent-subtle: rgba(59,130,246,0.12);
+  --accent-glow:   rgba(0,0,0,0);
+  --green:         #22C55E;
+  --green-subtle:  rgba(34,197,94,0.12);
+  --amber:         #F59E0B;
+  --amber-subtle:  rgba(245,158,11,0.12);
+  --red:           #EF4444;
+  --red-subtle:    rgba(239,68,68,0.12);
+  --blue:          #3B82F6;
+  --blue-subtle:   rgba(59,130,246,0.12);
+  --text:          #EDEEF2;
+  --text-2:        #9496A4;
+  --text-3:        #4d4f61;
+  --mono:          'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font:          'Inter', system-ui, sans-serif;
+  --radius:        8px;
+  --radius-lg:     14px;
+  --nav-h:         60px;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Animated background grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Nav ─────────────────────────────────────────────────────────────────── */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: var(--nav-h);
+  background: rgba(7,8,15,0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  gap: 20px;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.nav-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  background: var(--accent-subtle);
+  color: #a78bfa;
+  border: 1px solid rgba(124,58,237,0.3);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+.nav-spacer { flex: 1; }
+.sovereign-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--green-subtle);
+  border: 1px solid rgba(34,197,94,0.25);
+  color: var(--green);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.sovereign-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+  50% { opacity: 0.8; box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+}
+
+.nav-tab { border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.nav-tab.active { background: transparent; border-bottom: 2px solid var(--accent); color: var(--text); border-radius: 0; }
+.nav-tab:hover:not(.active) { color: var(--text); background: var(--surface-3); }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.main { position: relative; z-index: 1; padding: 28px; max-width: 1320px; margin: 0 auto; }
+
+.page { display: none; }
+.page.active { display: block; animation: fadeIn 0.25s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Hero cards ──────────────────────────────────────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s ease-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
+}
+.stat-card:hover { border-color: var(--border-bright); transform: translateY(-2px); }
+
+
+
+
+
+
+
+.stat-icon { font-size: 24px; margin-bottom: 10px; }
+.stat-value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.2; color: var(--text); }
+
+
+
+
+
+.stat-label { font-size: 13px; color: var(--text-2); margin-top: 8px; font-weight: 500; letter-spacing: 0.2px; }
+
+/* Score ring */
+.score-ring-wrap { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
+.score-ring-card {
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s ease-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
+ display: flex; align-items: center; gap: 24px; flex: 1; }
+.ring-svg { width: 90px; height: 90px; flex-shrink: 0; }
+.ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 10; }
+.ring-fg { fill: none; stroke-width: 10; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1); }
+.ring-label { font-size: 18px; font-weight: 700; fill: var(--text); }
+.ring-sub   { font-size: 10px; fill: var(--text-2); }
+.score-details h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.score-details p  { font-size: 13px; color: var(--text-2); }
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.section-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.section-header span {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.section-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.badge-green { background: var(--green-subtle); color: var(--green); }
+.badge-red   { background: var(--red-subtle);   color: var(--red); }
+.badge-amber { background: var(--amber-subtle);  color: var(--amber); }
+.badge-blue  { background: var(--blue-subtle);   color: var(--blue); }
+
+/* ── Policy cards ────────────────────────────────────────────────────────── */
+.policy-list { display: flex; flex-direction: column; gap: 10px; }
+.policy-card {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.policy-card:hover { border-color: var(--border-bright); }
+.policy-card-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  cursor: pointer;
+  user-select: none;
+}
+.policy-card-header:hover { background: rgba(255,255,255,0.02); }
+.policy-icon {
+  width: 36px; height: 36px;
+  background: var(--accent-subtle);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+.policy-name { font-weight: 600; font-size: 14px; }
+.policy-meta { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+.policy-chevron { margin-left: auto; color: var(--text-3); font-size: 12px; transition: transform 0.2s; }
+.policy-card.open .policy-chevron { transform: rotate(180deg); }
+.mini-bar { display: flex; gap: 6px; align-items: center; }
+.mini-pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.pill-green  { background: var(--green-subtle); color: var(--green); }
+.pill-red    { background: var(--red-subtle); color: var(--red); }
+.pill-amber  { background: var(--amber-subtle); color: var(--amber); }
+
+/* Obligations table */
+.policy-body {
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.policy-card.open .policy-body { max-height: 1200px; }
+.obligations-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.obligations-table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-3);
+  padding: 10px 20px;
+  text-align: left;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.obligations-table td {
+  padding: 10px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.obligations-table tr:last-child td { border-bottom: none; }
+.obligations-table tr:hover td { background: rgba(255,255,255,0.02); }
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.status-dot::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.satisfied::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.violated::before  { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+.status-dot.no-evidence::before { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.status-dot.satisfied { color: var(--green); }
+.status-dot.violated  { color: var(--red); }
+.status-dot.no-evidence { color: var(--amber); }
+.evidence-file {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-top: 3px;
+}
+.sev-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.sev-critical { background: rgba(239,68,68,0.2); color: #f87171; }
+.sev-high     { background: rgba(239,68,68,0.12); color: #fca5a5; }
+.sev-medium   { background: rgba(245,158,11,0.15); color: var(--amber); }
+.sev-low      { background: rgba(59,130,246,0.12); color: #93c5fd; }
+.sev-info     { background: var(--surface-3); color: var(--text-2); }
+
+/* ── Ledger ──────────────────────────────────────────────────────────────── */
+.ledger-timeline { display: flex; flex-direction: column; gap: 0; }
+.ledger-block {
+  display: flex;
+  gap: 16px;
+  padding: 0 0 0 8px;
+}
+.ledger-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 28px;
+}
+.ledger-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  flex-shrink: 0;
+  margin-top: 4px;
+  z-index: 1;
+}
+.ledger-connector {
+  width: 2px;
+  flex: 1;
+  background: linear-gradient(var(--accent-subtle), transparent);
+  min-height: 16px;
+}
+.ledger-content {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  flex: 1;
+  transition: border-color 0.2s;
+}
+.ledger-content:hover { border-color: rgba(124,58,237,0.35); }
+.ledger-seq {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ledger-seq-num { font-size: 12px; color: #a78bfa; font-weight: 700; font-family: var(--mono); }
+.ledger-type {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--accent-subtle);
+  color: #a78bfa;
+  letter-spacing: 0.3px;
+}
+.ledger-ts { margin-left: auto; font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+.ledger-hash {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  word-break: break-all;
+}
+.hash-label { color: var(--text-3); flex-shrink: 0; font-size: 10px; text-transform: uppercase; }
+.verify-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* ── Doctor ──────────────────────────────────────────────────────────────── */
+.doctor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.check-card {
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.check-card:hover { border-color: var(--border-bright); transform: translateY(-1px); }
+.check-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.check-icon { font-size: 20px; }
+.check-name { font-size: 14px; font-weight: 600; flex: 1; }
+.check-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+.check-status.pass { background: var(--green-subtle); color: var(--green); }
+.check-status.warn { background: var(--amber-subtle); color: var(--amber); }
+.check-status.fail { background: var(--red-subtle);   color: var(--red); }
+.check-detail { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+/* ── Action bar ──────────────────────────────────────────────────────────── */
+.action-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.btn { box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  border: none;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+  letter-spacing: 0.1px;
+}
+.btn-primary { box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 16px var(--accent-glow);
+}
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 4px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1); }
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.btn-secondary:hover { border-color: var(--border-bright); background: var(--surface-3); }
+.btn-success { background: var(--green-subtle); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
+.btn-success:hover { background: rgba(34,197,94,0.2); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+.btn .spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.search-wrap {
+  position: relative;
+  margin-bottom: 20px;
+}
+.search-icon {
+  position: absolute;
+  left: 14px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: 15px;
+}
+.search-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 13px 16px 13px 42px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.search-input::placeholder { color: var(--text-3); }
+
+/* ── Terminal / toast ────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  font-size: 13px;
+  z-index: 999;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+  max-width: 360px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-color: rgba(34,197,94,0.4); }
+.toast.error   { border-color: rgba(239,68,68,0.4); }
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 64px 24px;
+  color: var(--text-2);
+}
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.empty-state p  { font-size: 13px; }
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+.progress-bar-wrap {
+  background: var(--surface-2);
+  border-radius: 99px;
+  height: 6px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.progress-bar {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), var(--blue));
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .main { padding: 16px; }
+  nav { padding: 0 16px; gap: 12px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  
+}
+
 </style>
 
   <!-- ── PR Impact Modal ── -->
@@ -4118,7 +5542,7 @@ needle-macos-x64     # Intel</code></pre>
 <!-- ═══════════════════════════════════════════════════════ -->
 <script>
 // ── Router ──────────────────────────────────────────────
-const PAGES = ['home','search','index','setup','download','settings','privacy','terms','graph','dashboard','blast','health','security','churn'];
+const PAGES = ['home','search','index','setup','download','settings','privacy','terms','graph','dashboard','blast','health','security','churn', 'sentinel', 'sentinel'];
 
 function nav(page) {
   PAGES.forEach(p => {
@@ -4309,6 +5733,7 @@ const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
 
 // Expose folder-picker hook so the tray menu can trigger it.
 window.__needleOpenFolderPicker = () => pickAndIndexFolder();
+if (typeof listen === 'function') { listen('trigger-folder-pick', () => { pickAndIndexFolder(); }); }
 
 async function loadDashboard() {
   // Reset state each visit so stale data never shows
@@ -4581,7 +6006,7 @@ async function pollStatus() {
     document.getElementById('status-text').textContent = 'offline';
     const fd = document.getElementById('footer-dot');
     const ft = document.getElementById('footer-status-text');
-    if (fd) { fd.className = 'dot'; ft.textContent = 'Server offline — run needle serve'; }
+    if (fd) { fd.className = 'dot'; ft.textContent = 'Server offline — run sentinel serve'; }
   }
 }
 
@@ -4906,7 +6331,7 @@ function escJs(s) {
       heroTiming.style.display = 'block';
       heroTiming.textContent = results.length + ' results · ' + ms + 'ms';
     } catch(e) {
-      heroResults.innerHTML = '<div class="hero-demo-empty" style="color:var(--error)">Could not reach needle serve.</div>';
+      heroResults.innerHTML = '<div class="hero-demo-empty" style="color:var(--error)">Could not reach sentinel serve.</div>';
       heroTiming.style.display = 'none';
     }
   }
@@ -5143,7 +6568,7 @@ function _setupSVG() {
     document.getElementById('graph-detail').classList.remove('open');
     d3.select('#graph-svg').selectAll('.nodes g').attr('opacity', null);
     d3.select('#graph-svg').selectAll('.links line,.links path')
-      .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9);
+      .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38);
   });
   return { svg, g, W, H };
 }
@@ -5229,15 +6654,15 @@ function _addLinks(g, simLinks) {
   if (curved) {
     return g.append('g').attr('class','links').selectAll('path').data(simLinks).join('path')
       .attr('fill','none')
-      .attr('stroke', d => EDGE_COLOR[d.kind]||'#888')
-      .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9)
-      .attr('stroke-width', 2.0)
+      .attr('stroke', d => EDGE_COLOR[d.kind]||'#555')
+      .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38)
+      .attr('stroke-width', 1.2)
       .attr('marker-end', d => d.kind!=='contains'?`url(#arr-${d.kind})`:null);
   }
   return g.append('g').attr('class','links').selectAll('line').data(simLinks).join('line')
-    .attr('stroke', d => EDGE_COLOR[d.kind]||'#888')
-    .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9)
-    .attr('stroke-width', 2.0)
+    .attr('stroke', d => EDGE_COLOR[d.kind]||'#555')
+    .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38)
+    .attr('stroke-width', 1.2)
     .attr('marker-end', d => d.kind!=='contains'?`url(#arr-${d.kind})`:null);
 }
 
@@ -5399,7 +6824,7 @@ function _renderRadial() {
     });
 
   const link = g.append('g').attr('class','links').selectAll('path').data(simLinks).join('path')
-    .attr('fill','none').attr('stroke',d=>EDGE_COLOR[d.kind]||'#888')
+    .attr('fill','none').attr('stroke',d=>EDGE_COLOR[d.kind]||'#555')
     .attr('stroke-opacity',0.2).attr('stroke-width',1)
     .attr('d', d => `M${d.source.x},${d.source.y}Q${W/2},${H/2},${d.target.x},${d.target.y}`);
 
@@ -5729,8 +7154,8 @@ function _renderBundle() {
     const sw = 0.6 + (e.weight/maxW)*2.4;
     const el=edgeG.append('path').datum({from:e.from, to:e.to, weight:e.weight})
       .attr('fill','none')
-      .attr('stroke', EDGE_COLOR[e.kind]||'rgba(255,255,255,0.3)')
-      .attr('stroke-opacity',0.12).attr('stroke-width',sw)
+      .attr('stroke', EDGE_COLOR[e.kind]||'rgba(255,255,255,0.7)')
+      .attr('stroke-opacity',0.5).attr('stroke-width',sw)
       .attr('d',`M${sp.x},${sp.y}Q${cpx},${cpy} ${tp.x},${tp.y}`);
     edgeEls.push(el);
   });
@@ -5758,7 +7183,7 @@ function _renderBundle() {
       .on('mouseleave',()=>{
         edgeEls.forEach(ep=>{
           const d=ep.datum();
-          ep.attr('stroke-opacity',0.12).attr('stroke-width',0.6+(d.weight/maxW)*2.4);
+          ep.attr('stroke-opacity',0.5).attr('stroke-width',0.6+(d.weight/maxW)*2.4);
         });
         hideTooltip();
       });
@@ -6229,7 +7654,7 @@ function _renderTree() {
   if (root._children) { root.children = root._children; root._children = null; }
 
   const gLink = g.append('g').attr('fill','none')
-    .attr('stroke','rgba(255,255,255,0.14)').attr('stroke-width',1.5);
+    .attr('stroke','rgba(255,255,255,0.6)').attr('stroke-width',1.5);
   const gNode = g.append('g');
 
   function autoFit() {
@@ -6287,7 +7712,7 @@ function _renderTree() {
     ndE.append('circle')
       .attr('r', d=>d.data.isRoot?9:d.data.isFolder?6.5:d.data.isFile?4.5:3)
       .attr('fill', d=>{
-        if(d.data.isRoot)   return '#7C3AED';
+        if(d.data.isRoot)   return '#3b82f6';
         if(d.data.isFolder) return '#F59E0B';
         if(d.data.isFile)   return d.data.node?nodeColor(d.data.node):'#6366F1';
         return KIND_COLOR[d.data.node?.kind]||'#6B7280';
@@ -6410,7 +7835,7 @@ function _renderBlock() {
     const w=Math.min(5,1+Math.log2(cnt+1)*0.9);
     const op=Math.min(0.55,0.12+cnt*0.03);
     arrowG.append('path').datum({sf,tf,cnt})
-      .attr('fill','none').attr('stroke','rgba(255,255,255,0.22)')
+      .attr('fill','none').attr('stroke','rgba(255,255,255,0.6)')
       .attr('stroke-width',w).attr('stroke-opacity',op)
       .attr('marker-end','url(#blk-arrow)')
       .attr('d',`M${sx},${sy}Q${cpx},${cpy} ${ex},${ey}`)
@@ -6424,7 +7849,7 @@ function _renderBlock() {
       })
       .on('mousemove',moveTooltip)
       .on('mouseleave',function(){
-        d3.select(this).attr('stroke','rgba(255,255,255,0.22)').attr('stroke-opacity',op);
+        d3.select(this).attr('stroke','rgba(255,255,255,0.6)').attr('stroke-opacity',op);
         hideTooltip();
       });
   });
@@ -6488,7 +7913,7 @@ function _renderBlock() {
       });
       if(folder.nodes.length>maxD){
         grp.append('text').attr('x',cellW-6).attr('y',cellH-10)
-          .attr('text-anchor','end').attr('font-size','8px').attr('fill','rgba(255,255,255,0.3)')
+          .attr('text-anchor','end').attr('font-size','8px').attr('fill','rgba(255,255,255,0.7)')
           .text(`+${folder.nodes.length-maxD}`);
       }
     }
@@ -6792,7 +8217,7 @@ function _renderIssuesPanel() {
     actions.push({
       effort:'easy', title:'Re-index Codebase',
       desc:'Rebuild the graph with the latest file changes to ensure analysis reflects current state.',
-      steps:['Click Re-layout in the left panel','Or run `needle index` from the terminal']
+      steps:['Click Re-layout in the left panel','Or run `sentinel index` from the terminal']
     });
 
     if (!actions.length) { body.innerHTML='<div class="gip-empty">All clear — no actions needed</div>'; return; }
@@ -6938,7 +8363,7 @@ function exportReport(format) {
     const high=secIssues.filter(i=>(i.severity||'').toLowerCase()==='high').length;
     const med=secIssues.filter(i=>(i.severity||'').toLowerCase()==='medium').length;
     const lines=[
-      `# Needle Codebase Analysis Report`,``,`Generated: ${ts}`,``,
+      `# Sentinel Codebase Analysis Report`,``,`Generated: ${ts}`,``,
       `## Stats`,``,
       `| Metric | Value |`,`|---|---|`,
       `| Nodes | ${nodes.length} |`,`| Edges | ${edges.length} |`,
@@ -7001,11 +8426,7 @@ function _impSubmit() {
 
 async function startLocalImport() {
   const path = document.getElementById('local-import-path')?.value?.trim() || '';
-  if (!path) {
-    _ghImportError('Please enter a local folder path.');
-    return;
-  }
-
+  // Bypass path check in desktop app to allow native folder picker
   document.getElementById('gh-import-error').style.display    = 'none';
   document.getElementById('gh-import-active').style.display   = 'none';
   document.getElementById('gh-import-progress').style.display = 'block';
@@ -7466,6 +8887,416 @@ function openFile(path, line) {
   fetch('/api/open', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path, line }) });
 }
 
+
+/* Sentinel JS */
+
+// ── State ─────────────────────────────────────────────────────────────────
+const API = '/api';
+let auditData = null;
+let allLinks = [];
+
+// ── Tab routing ────────────────────────────────────────────────────────────
+function showPageSentinel(name, btn) {
+  document.querySelectorAll('.spage').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (name === 'ledger') loadLedger();
+  if (name === 'doctor') runDoctor();
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ── API helpers ────────────────────────────────────────────────────────────
+async function apiFetch(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }});
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+// ── Policy upload helpers ───────────────────────────────────────────────
+function showUploadDialog() {
+  const m = document.getElementById('upload-modal');
+  if (!m) return;
+  m.style.display = 'flex';
+  document.getElementById('policy-file-input').value = '';
+  document.getElementById('policy-name-input').value = '';
+  document.getElementById('upload-result').textContent = '';
+}
+
+function hideUploadDialog() {
+  const m = document.getElementById('upload-modal');
+  if (!m) return;
+  m.style.display = 'none';
+}
+
+async function loadPolicies() {
+  const listEl = document.getElementById('policy-list-container');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="empty-icon" style="animation:spin 1s linear infinite">⟳</div><p style="text-align: center;">Loading policies...</p>';
+  
+  try {
+    const res = await fetch(API + '/api/policies');
+    const policies = await res.json();
+    
+    if (policies.error || policies.length === 0) {
+      listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><h3>No policies ingested yet</h3><p>Upload a PDF or Markdown policy to begin.</p></div>';
+      return;
+    }
+    
+    listEl.innerHTML = policies.map(p => `
+      <div class="policy-card" style="margin-bottom: 10px;">
+        <div class="policy-card-header" style="cursor: default;">
+           <div class="policy-icon">📋</div>
+           <div style="flex-grow: 1;">
+              <div class="policy-name">${p.name}</div>
+              <div class="policy-meta">Version ${p.version} • ${p.clauses ? p.clauses.length : 0} Clauses</div>
+           </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = `<p style="color:red; text-align: center;">Failed to load policies: ${e.message}</p>`;
+  }
+}
+
+async function uploadPolicy() {
+  const fileEl = document.getElementById('policy-file-input');
+  const nameEl = document.getElementById('policy-name-input');
+  const resultEl = document.getElementById('upload-result');
+  if (!fileEl || !fileEl.files || fileEl.files.length === 0) { resultEl.textContent = 'Select a file to upload.'; return; }
+  const f = fileEl.files[0];
+  const fd = new FormData();
+  fd.append('file', f, f.name);
+  if (nameEl && nameEl.value.trim()) fd.append('name', nameEl.value.trim());
+  resultEl.textContent = 'Uploading…';
+  try {
+    const res = await fetch(API + '/api/policy/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      resultEl.textContent = 'Upload failed: ' + (data.error || 'unknown');
+      return;
+    }
+    resultEl.textContent = 'Uploaded policy ' + (data.policy_id || '(unknown)') + ' — clauses: ' + (data.clauses||0) + ', obligations: ' + (data.obligations||0);
+    setTimeout(() => { hideUploadDialog(); loadPolicies(); }, 800);
+  } catch (e) {
+    resultEl.textContent = 'Upload error: ' + e.message;
+  }
+}
+
+// ── Dashboard ──────────────────────────────────────────────────────────────
+async function loadDashboard(report) {
+  if (!report) return;
+  let sat = 0, vio = 0, gap = 0, policies = report.length;
+  report.forEach(r => { sat += r.satisfied; vio += r.violated; gap += r.no_evidence; });
+  const total = sat + vio + gap;
+  const pct = total > 0 ? Math.round(sat / total * 100) : 0;
+
+  setText('stat-satisfied', sat);
+  setText('stat-violated', vio);
+  setText('stat-gaps', gap);
+  setText('stat-policies', policies);
+
+  // Score ring
+  const circumference = 2 * Math.PI * 40;
+  const offset = circumference * (1 - pct / 100);
+  const ring = document.getElementById('ring-fg');
+  if (ring) {
+    ring.style.strokeDashoffset = offset;
+    ring.style.stroke = pct >= 80 ? '#22C55E' : pct >= 50 ? '#F59E0B' : '#EF4444';
+  }
+  setText('ring-pct', pct + '%');
+  const scoreBar = document.getElementById('score-bar');
+  if (scoreBar) scoreBar.style.width = pct + '%';
+  setText('score-summary',
+    `${sat} of ${total} obligations satisfied across ${policies} policy document${policies !== 1 ? 's' : ''}.`);
+
+  // Recent activity
+  const act = document.getElementById('dashboard-activity');
+  act.innerHTML = report.map(r => `
+    <div class="policy-card" style="margin-bottom:10px">
+      <div class="policy-card-header" style="cursor:default">
+        <div class="policy-icon">📋</div>
+        <div>
+          <div class="policy-name">${r.policy_name}</div>
+          <div class="policy-meta">v${r.policy_version} · ${r.total_obligations} obligations · Generated ${new Date(r.generated_at).toLocaleTimeString()}</div>
+        </div>
+        <div class="mini-bar" style="margin-left:auto">
+          <span class="mini-pill pill-green">${r.satisfied} ✅</span>
+          <span class="mini-pill pill-red">${r.violated} ❌</span>
+          <span class="mini-pill pill-amber">${r.no_evidence} ⚠</span>
+        </div>
+      </div>
+    </div>`).join('');
+
+  // Ledger block count
+  try {
+    const lb = await apiFetch('/ledger');
+    setText('stat-blocks', lb.total_blocks ?? 0);
+  } catch { setText('stat-blocks', 0); }
+}
+
+// ── Audit ──────────────────────────────────────────────────────────────────
+async function runAudit() {
+  const btn = document.getElementById('run-audit-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⟳</span> Auditing…';
+  document.getElementById('audit-results').innerHTML = '<div class="empty-state"><div class="empty-icon" style="animation:spin 1s linear infinite">⟳</div><h3>Running compliance audit…</h3><p>Linking policy obligations to code evidence via hybrid search.</p></div>';
+  try {
+    const data = await apiFetch('/audit');
+    auditData = data;
+    allLinks = data.flatMap(r => r.links.map(l => ({ ...l, policy_name: r.policy_name })));
+    renderAudit(allLinks, data);
+    loadDashboard(data);
+    document.getElementById('sign-ledger-btn').disabled = false;
+    toast('Audit complete — ' + allLinks.length + ' obligations checked', 'success');
+  } catch (e) {
+    document.getElementById('audit-results').innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><h3>Audit failed</h3><p>${e.message}</p></div>`;
+    toast('Audit failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>▶</span> Run Audit';
+  }
+}
+
+function statusClass(s) {
+  if (s === 'satisfied') return 'satisfied';
+  if (s === 'violated') return 'violated';
+  return 'no-evidence';
+}
+function statusLabel(s) {
+  if (s === 'satisfied') return 'Satisfied';
+  if (s === 'violated') return 'Violated';
+  return 'No Evidence';
+}
+function sevClass(s) {
+  return 'sev-' + (s || 'info').toLowerCase();
+}
+
+function renderAudit(links, rawData) {
+  if (!links.length) {
+    document.getElementById('audit-results').innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><h3>No policies found</h3><p>Run <code>sentinel policy ingest &lt;file&gt;</code> first.</p></div>';
+    return;
+  }
+
+  // Group by policy
+  const byPolicy = {};
+  links.forEach(l => {
+    if (!byPolicy[l.policy_name]) byPolicy[l.policy_name] = [];
+    byPolicy[l.policy_name].push(l);
+  });
+
+  const html = Object.entries(byPolicy).map(([pname, plinks]) => {
+    const sat = plinks.filter(l => l.status === 'satisfied').length;
+    const vio = plinks.filter(l => l.status === 'violated').length;
+    const gap = plinks.filter(l => l.status === 'no_implementation_found').length;
+    const rows = plinks.map(l => {
+      const status = l.status === 'no_implementation_found' ? 'no-evidence' : l.status;
+      let evidenceCell = '';
+      if (l.status === 'satisfied' && l.evidence?.length) {
+        evidenceCell = `<div class="evidence-file">${l.evidence[0].file_path}:${l.evidence[0].line_start}</div>`;
+      } else if (l.status === 'violated') {
+        evidenceCell = `<div style="color:var(--red);font-size:12px">${l.reason || 'Value contradiction detected'}</div>`;
+      }
+      return `<tr>
+        <td><code style="font-family:var(--mono);font-size:11px;color:#a78bfa">${l.clause_number}</code></td>
+        <td style="font-weight:500">${l.title}</td>
+        <td><span class="sev-badge ${sevClass(l.severity)}">${l.severity}</span></td>
+        <td><span class="status-dot ${status}">${statusLabel(l.status === 'no_implementation_found' ? 'no-evidence' : l.status)}</span></td>
+        <td>${evidenceCell}</td>
+      </tr>`;
+    }).join('');
+    return `
+    <div class="policy-card open" style="margin-bottom:12px">
+      <div class="policy-card-header" onclick="toggleCard(this)">
+        <div class="policy-icon">📋</div>
+        <div>
+          <div class="policy-name">${pname}</div>
+          <div class="policy-meta">${plinks.length} obligations</div>
+        </div>
+        <div class="mini-bar">
+          <span class="mini-pill pill-green">${sat} ✅</span>
+          <span class="mini-pill pill-red">${vio} ❌</span>
+          <span class="mini-pill pill-amber">${gap} ⚠</span>
+        </div>
+        <span class="policy-chevron">▼</span>
+      </div>
+      <div class="policy-body">
+        <table class="obligations-table">
+          <thead><tr>
+            <th>Clause</th><th>Obligation</th><th>Severity</th><th>Status</th><th>Evidence</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('audit-results').innerHTML = html;
+}
+
+function filterAudit(query) {
+  if (!auditData) return;
+  const q = query.toLowerCase();
+  const filtered = q ? allLinks.filter(l =>
+    l.title.toLowerCase().includes(q) ||
+    l.clause_number.toLowerCase().includes(q) ||
+    (l.severity || '').toLowerCase().includes(q) ||
+    l.policy_name.toLowerCase().includes(q)
+  ) : allLinks;
+  renderAudit(filtered, auditData);
+}
+
+function toggleCard(header) {
+  header.closest('.policy-card').classList.toggle('open');
+}
+
+async function signToLedger() {
+  const btn = document.getElementById('sign-ledger-btn');
+  btn.disabled = true;
+  try {
+    const result = await apiFetch('/ledger/sign', { method: 'POST', body: JSON.stringify({ type: 'compliance_audit' }) });
+    toast(`✅ Signed to ledger as block #${result.sequence}`, 'success');
+    loadLedger();
+    document.getElementById('stat-blocks').textContent = result.sequence + 1;
+  } catch (e) {
+    toast('Signing failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Ledger ─────────────────────────────────────────────────────────────────
+async function loadLedger() {
+  try {
+    const data = await apiFetch('/ledger');
+    document.getElementById('ledger-count').textContent = (data.total_blocks || 0) + ' blocks';
+    document.getElementById('stat-blocks').textContent = data.total_blocks || 0;
+    if (!data.blocks?.length) {
+      document.getElementById('ledger-blocks').innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><h3>Empty chain</h3><p>Run an audit and sign it to append the first block.</p></div>';
+      return;
+    }
+    document.getElementById('ledger-blocks').innerHTML = '<div class="ledger-timeline">' +
+      data.blocks.map((b, i) => `
+      <div class="ledger-block">
+        <div class="ledger-line">
+          <div class="ledger-dot"></div>
+          ${i < data.blocks.length - 1 ? '<div class="ledger-connector"></div>' : ''}
+        </div>
+        <div class="ledger-content">
+          <div class="ledger-seq">
+            <span class="ledger-seq-num">#${b.sequence}</span>
+            <span class="ledger-type">${b.entry_type}</span>
+            <span class="ledger-ts">${new Date(b.timestamp).toLocaleString()}</span>
+          </div>
+          <div class="ledger-hash">
+            <span class="hash-label">HASH</span>
+            ${b.block_hash}
+          </div>
+          <div class="ledger-hash" style="margin-top:4px">
+            <span class="hash-label">SIGNER</span>
+            ${b.signer_public_key?.substring(0, 32)}…
+          </div>
+        </div>
+      </div>`).join('') + '</div>';
+  } catch(e) {
+    document.getElementById('ledger-blocks').innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><h3>Could not load ledger</h3><p>${e.message}</p></div>`;
+  }
+}
+
+async function verifyLedger() {
+  try {
+    const data = await apiFetch('/ledger/verify');
+    const el = document.getElementById('ledger-verify-result');
+    if (data.valid) {
+      el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;background:var(--green-subtle);border:1px solid rgba(34,197,94,0.3);border-radius:var(--radius-lg);margin-bottom:16px;font-size:13px;font-weight:600;color:var(--green)">
+        ✅ Chain integrity verified — ${data.total_blocks} block${data.total_blocks !== 1 ? 's' : ''} valid. No tampering detected.
+      </div>`;
+    } else {
+      el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;background:var(--red-subtle);border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-lg);margin-bottom:16px;font-size:13px;font-weight:600;color:var(--red)">
+        ❌ Tamper detected: ${data.error}
+      </div>`;
+    }
+    toast(data.valid ? 'Chain verified ✅' : 'Tamper detected ❌', data.valid ? 'success' : 'error');
+  } catch(e) {
+    toast('Verify failed: ' + e.message, 'error');
+  }
+}
+
+// ── Doctor ─────────────────────────────────────────────────────────────────
+const DOCTOR_META = {
+  'Sovereign Build': { icon: '🏗', desc: 'Verifies cloud/network crates are compiled out' },
+  'Local LLM Routing': { icon: '🤖', desc: 'Confirms LLM traffic routes only to loopback Ollama' },
+  'Cryptographic Ledger': { icon: '🔗', desc: 'Verifies ledger chain integrity' },
+  'Policy Index': { icon: '📋', desc: 'Checks ingested policy documents' },
+  'Code Index': { icon: '🔍', desc: 'Verifies the code search index is built' },
+};
+async function runDoctor() {
+  document.getElementById('doctor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon" style="animation:spin 1s linear infinite">⟳</div><h3>Running diagnostics…</h3></div>';
+  try {
+    const data = await apiFetch('/doctor');
+    document.getElementById('doctor-grid').innerHTML = data.checks.map(c => {
+      const m = DOCTOR_META[c.name] || { icon: '🔧', desc: '' };
+      const cls = c.status === 'pass' ? 'pass' : c.status === 'warn' ? 'warn' : 'fail';
+      return `
+      <div class="check-card">
+        <div class="check-header">
+          <span class="check-icon">${m.icon}</span>
+          <span class="check-name">${c.name}</span>
+          <span class="check-status ${cls}">${c.status.toUpperCase()}</span>
+        </div>
+        <div class="check-detail">${c.details}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('doctor-grid').innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">❌</div><h3>Doctor failed</h3><p>${e.message}</p></div>`;
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+function refreshCachedAudit() {
+  return apiFetch('/audit/cached').then(d => {
+    if (!d) return;
+    auditData = d;
+    allLinks = d.flatMap(r => r.links.map(l => ({ ...l, policy_name: r.policy_name })));
+    loadDashboard(d);
+  }).catch(() => {});
+}
+
+try {
+  const sse = new EventSource('/api/events');
+  sse.onmessage = (e) => {
+    if (e.data !== 'index_updated') return;
+    toast('Codebase updated — refreshing dashboard', 'info');
+    refreshCachedAudit();
+    const searchPage = document.getElementById('page-search');
+    if (searchPage?.classList.contains('active') && typeof performSearch === 'function') {
+      performSearch();
+    }
+  };
+} catch (_) {}
+
+refreshCachedAudit();
+loadLedger();
 </script>
+<div id="toast" class="toast"></div>
 </body>
 </html>

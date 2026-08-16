@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
 import { Search, FolderGit2, ShieldAlert, List, Settings, Minus, Square, X, Play, Loader2, Database, Network } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -155,7 +155,7 @@ function App() {
         <div className="container" style={{ display: 'flex', width: '100%', alignItems: 'center' }}>
           <div className="nav-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px', fontWeight: 600, color: 'var(--text)' }}>
             <Network size={20} color="var(--accent)" />
-            Needle
+            Sentinel
           </div>
           
           <div className="nav-sep" style={{ margin: '0 24px' }}></div>
@@ -175,7 +175,7 @@ function App() {
             </div>
             
             <div className="nav-link" style={{ position: 'relative' }}>
-              More ▾
+              More â–¾
             </div>
           </div>
 
@@ -418,3 +418,4 @@ function App() {
   )
 }
 export default App
+
