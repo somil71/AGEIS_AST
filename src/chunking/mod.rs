@@ -20,12 +20,17 @@ pub fn detect_chunker(language: Language) -> Box<dyn Chunker> {
         | Language::Go
         | Language::Java
         | Language::C
-        | Language::Cpp => Box::new(code::CodeChunker),
+        | Language::Cpp
+        | Language::Php
+        | Language::CSharp
+        | Language::Ruby
+        | Language::Shell
+        | Language::Sql => Box::new(code::CodeChunker),
 
         Language::Markdown | Language::PlainText | Language::Pdf => Box::new(prose::ProseChunker),
 
         // Config/data files: treat as prose (top-level key blocks)
-        Language::Toml | Language::Yaml | Language::Json | Language::Shell
+        Language::Toml | Language::Yaml | Language::Json | Language::Cobol
         | Language::Dockerfile => Box::new(prose::ProseChunker),
     }
 }

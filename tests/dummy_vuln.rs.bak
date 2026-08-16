@@ -1,0 +1,1 @@
+﻿fn login() { let secret = "hardcoded_password_123"; }

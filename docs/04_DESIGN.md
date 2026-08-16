@@ -118,7 +118,7 @@ $ needle init ~/code ~/notes
 
   ✓ Index ready
     94,217 chunks · 14,050 files · 327 MB on disk
-    Model: all-MiniLM-L6-v2 (384-dim)
+    Model: hash-projection-384
     Stored at: ~/.needle/index/
 ```
 
@@ -400,7 +400,7 @@ watch = ["~/code", "~/notes", "~/docs"]
 ignore = [".git", "node_modules", "target", "__pycache__", ".env", "*.lock"]
 
 [index]
-embedding_model = "all-MiniLM-L6-v2"
+embedding_model = "hash-projection-384"
 embedding_dim = 384
 
 [hnsw]
@@ -439,9 +439,9 @@ Error: ~/code does not exist
   The directory you specified for indexing was not found.
   Check the path and try again: needle init ~/code
 
-Error: embedding model not found
-  Expected: ~/.needle/models/minilm-l6-v2.onnx
-  Run: needle init --download-model
+Error: port 7700 already in use
+  The server port 7700 is currently occupied by another process.
+  Run with a custom port: needle serve --port 8888
 
 Error: index corrupted (WAL checksum mismatch at sequence 4821)
   The index may have been damaged by an unclean shutdown.

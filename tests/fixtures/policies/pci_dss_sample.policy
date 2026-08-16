@@ -1,0 +1,9 @@
+PCI DSS Version 4.0 Standard for Payment Card Security
+
+Requirement 3: Protect Stored Account Data
+Requirement 3.4: Primary Account Numbers (PAN) MUST be rendered unreadable anywhere it is stored using strong cryptography with associated key management processes.
+Requirement 3.5: Cryptographic keys used for encryption of cardholder data MUST be protected against disclosure and unauthorized replacement.
+
+Requirement 8: Identify Users and Authenticate Access
+Requirement 8.2: User identification and authentication management systems MUST enforce unique user IDs and strong passwords of at least 12 characters.
+Requirement 8.3: Strong multi-factor authentication (MFA) MUST be implemented for all access into the cardholder data environment.

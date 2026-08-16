@@ -43,7 +43,7 @@ enum Commands {
         compact: bool,
 
         /// Filter results to a specific language (rs, py, ts, js, go, md, …)
-        #[arg(short, long)]
+        #[arg(short = 'L', long)]
         lang: Option<String>,
     },
 
@@ -95,6 +95,75 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
+
+    /// Manage security and compliance policies (ingest, list)
+    Policy {
+        #[command(subcommand)]
+        action: cli::policy::PolicyCommands,
+    },
+
+    /// Run diagnostic checks for system readiness and sovereign mode compliance
+    Doctor {
+        /// Verify sovereign mode (zero cloud routes, loopback LLM, ledger integrity)
+        #[arg(long)]
+        sovereign: bool,
+
+        /// Strict offline validation (reject any non-loopback endpoint)
+        #[arg(long)]
+        offline_strict: bool,
+
+        /// Ollama endpoint to probe (default: http://127.0.0.1:11434)
+        #[arg(long, default_value = "http://127.0.0.1:11434")]
+        ollama_url: String,
+
+        /// Custom path to ledger audit chain file
+        #[arg(long)]
+        ledger_path: Option<String>,
+
+        /// Output diagnostics as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Cryptographic audit ledger commands
+    Ledger {
+        #[command(subcommand)]
+        action: cli::ledger::LedgerCommands,
+    },
+
+    /// Run policy-code compliance audit and generate a report
+    Audit {
+        /// Auto-append the report to the cryptographic audit ledger
+        #[arg(long)]
+        ledger: bool,
+
+        /// Write report to file instead of stdout
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Output as JSON instead of Markdown
+        #[arg(long)]
+        json: bool,
+
+        /// Return exit code 1 if there are any compliance violations (for CI/CD)
+        #[arg(long)]
+        strict: bool,
+
+        /// Generate a PDF report via Edge headless
+        #[arg(long)]
+        pdf: Option<String>,
+    },
+
+    /// Automatically fix a security vulnerability using AI
+    Fix {
+        /// Path to the file containing the vulnerability
+        #[arg(required = true)]
+        file: String,
+
+        /// Description or ID of the issue to fix
+        #[arg(long)]
+        issue: String,
+    },
 }
 
 #[tokio::main]
@@ -122,6 +191,13 @@ async fn main() -> Result<()> {
         Commands::Serve { port, no_open } => cli::serve::run(port, no_open).await?,
         Commands::Report { output } => cli::report::run(output).await?,
         Commands::Graph  { output } => cli::graph::run(output).await?,
+        Commands::Policy { action } => cli::policy::run(action).await?,
+        Commands::Doctor { sovereign, offline_strict, ollama_url, ledger_path, json } => {
+            cli::doctor::run(sovereign, offline_strict, &ollama_url, ledger_path.as_deref(), json).await?;
+        }
+        Commands::Ledger { action } => cli::ledger::run(action).await?,
+        Commands::Audit { ledger, output, json, strict, pdf } => cli::audit::run(ledger, output, json, strict, pdf).await?,
+        Commands::Fix { file, issue } => cli::fix::run(&file, &issue).await?,
     }
 
     Ok(())

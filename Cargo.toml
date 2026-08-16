@@ -9,6 +9,10 @@ edition = "2021"
 authors = ["Your Name <you@example.com>"]
 description = "A local-first hybrid search engine with keyword + semantic search"
 
+[[bin]]
+name = "sentinel"
+path = "src/main.rs"
+
 [dependencies]
 # CLI framework
 clap = { version = "4.4", features = ["derive"] }
@@ -21,6 +25,7 @@ tree-sitter-rust = "0.20"
 tree-sitter-go = "0.20"
 tree-sitter-java = "0.20"
 tree-sitter-cpp = "0.22"
+tree-sitter-php = "0.20"
 
 # File watching
 notify = "6.1"
@@ -56,26 +61,20 @@ thiserror = "1.0"
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 
-# Web UI server
-axum = "0.7"
-tower-http = { version = "0.5", features = ["cors"] }
+# Cryptographic Audit Ledger & Signing (Pure offline crypto)
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+hex = "0.4"
 
-# Open browser / files
-open = "5"
-
-# Auth / users DB (Postgres — Neon)
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros"] }
-uuid = { version = "1", features = ["v4"] }
-
-# Cookie support for sessions
-tower-cookies = "0.10"
-time = "0.3"
-
-# URL encoding
-urlencoding = "2"
-
-# HTTP client (Ollama embeddings + chat)
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+# ── Optional Cloud / Network Dependencies ───────────────────────────────────
+axum = { version = "0.7", optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
+open = { version = "5", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros"], optional = true }
+tower-cookies = { version = "0.10", optional = true }
+time = { version = "0.3", optional = true }
+urlencoding = { version = "2", optional = true }
+reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
 
 # PDF text extraction (pure Rust)
 pdf-extract = "0.7"
@@ -98,9 +97,33 @@ indicatif = "0.17"
 # Colored terminal output
 colored = "2"
 
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+tree-sitter-c-sharp = "0.20"
+tree-sitter-ruby = "0.20"
+tree-sitter-bash = "0.20"
+tree-sitter-sql = "0.0.2"
+pulldown-cmark = "0.9"
+tokio-stream = "0.1.19"
+async-stream = "0.3.6"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
+
+[features]
+default = ["cloud"]
+cloud = [
+    "dep:axum",
+    "dep:tower-http",
+    "dep:tower-cookies",
+    "dep:sqlx",
+    "dep:reqwest",
+    "dep:open",
+    "dep:urlencoding",
+    "dep:time",
+]
+sovereign = []
 
 [[bench]]
 name = "hnsw_bench"

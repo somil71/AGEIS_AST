@@ -56,7 +56,7 @@ _Full technical reference covering every component, data flow, schema, and desig
 - [x] Surprise edges — cross-community call detection
 - [x] Markdown output
 
-### MCP Server (11 tools)
+### MCP Server (14 tools)
 - [x] `search_code` — hybrid search
 - [x] `find_callers` — reverse call lookup
 - [x] `find_callees` — forward call lookup
@@ -68,6 +68,9 @@ _Full technical reference covering every component, data flow, schema, and desig
 - [x] `get_file_structure` — directory tree
 - [x] `get_stats` — index summary
 - [x] `explain` — LLM-based explanation (requires API key)
+- [x] `get_health_score` — codebase health score breakdown (0–100)
+- [x] `get_security_scan` — scan for secrets, XSS, and SQL injection vulnerabilities
+- [x] `blast_radius` — affected files and impact risk if a file changes
 
 ### CLI Commands
 - [x] `needle init` — build index for one or more directories
@@ -494,6 +497,9 @@ Connect from any MCP client:
 | `get_file_structure` | `path?` | Directory tree from index |
 | `get_stats` | — | Chunk count, node count, edge count, index size |
 | `explain` | `symbol` | LLM explanation (routes to configured provider) |
+| `get_health_score` | — | Codebase health score breakdown (0–100) |
+| `get_security_scan` | — | Scan for secrets, XSS, and SQL injection vulnerabilities |
+| `blast_radius` | `file` | Affected files and impact risk if a file changes |
 
 ---
 

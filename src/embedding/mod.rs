@@ -22,6 +22,7 @@ pub struct EmbeddingModel {
 
 enum Strategy {
     Hash,
+    #[cfg(feature = "cloud")]
     Ollama {
         base_url: String,
         model: String,
@@ -29,6 +30,7 @@ enum Strategy {
     },
 }
 
+#[cfg(feature = "cloud")]
 #[derive(Deserialize)]
 struct OllamaEmbedResp {
     embedding: Vec<f32>,
@@ -42,6 +44,7 @@ impl EmbeddingModel {
 
     /// Try to connect to Ollama and use it for embeddings.
     /// Returns `None` if Ollama isn't reachable or the model isn't pulled.
+    #[cfg(feature = "cloud")]
     pub fn try_ollama(base_url: &str, model: &str) -> Option<Self> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -59,6 +62,12 @@ impl EmbeddingModel {
                 client,
             },
         })
+    }
+
+    /// Try to connect to Ollama and use it for embeddings (sovereign mode returns None).
+    #[cfg(not(feature = "cloud"))]
+    pub fn try_ollama(_base_url: &str, _model: &str) -> Option<Self> {
+        None
     }
 
     /// Restore an Ollama model from stored metadata (serve.rs startup).
@@ -85,18 +94,27 @@ impl EmbeddingModel {
     pub fn model_string(&self) -> String {
         match &self.strategy {
             Strategy::Hash => format!("hash-projection-{}", self.dim),
+            #[cfg(feature = "cloud")]
             Strategy::Ollama { model, .. } => format!("ollama:{}", model),
         }
     }
 
     pub fn is_ollama(&self) -> bool {
-        matches!(&self.strategy, Strategy::Ollama { .. })
+        #[cfg(feature = "cloud")]
+        {
+            matches!(&self.strategy, Strategy::Ollama { .. })
+        }
+        #[cfg(not(feature = "cloud"))]
+        {
+            false
+        }
     }
 
     /// Embed text to a unit-normalized f32 vector.
     pub fn embed(&self, text: &str) -> Vec<f32> {
         match &self.strategy {
             Strategy::Hash => hash_embed(text, self.dim),
+            #[cfg(feature = "cloud")]
             Strategy::Ollama { client, base_url, model } => {
                 Self::call_ollama(client, base_url, model, text)
                     .unwrap_or_else(|_| hash_embed(text, self.dim))
@@ -108,6 +126,7 @@ impl EmbeddingModel {
         texts.iter().map(|t| self.embed(t)).collect()
     }
 
+    #[cfg(feature = "cloud")]
     fn call_ollama(
         client: &reqwest::blocking::Client,
         base_url: &str,

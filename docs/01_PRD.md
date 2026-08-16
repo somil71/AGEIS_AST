@@ -73,8 +73,8 @@ Point Needle at your directories. Within minutes, every file is indexed. Type a 
 
 ### FR-4: HNSW vector index (semantic search)
 
-- Embed each chunk using a local sentence-transformer model (all-MiniLM-L6-v2 default, 384-dim; code-specific model for code chunks as stretch goal).
-- Run inference via ONNX Runtime — no Python, no GPU required.
+- Embed each chunk using a local built-in hash-projection model (384-dim; optionally upgrades to Ollama-based models like nomic-embed-text).
+- Runs entirely in-process on CPU — no external dependencies, model downloads, or GPU required by default.
 - Build a multi-layer HNSW graph from scratch:
   - Exponentially distributed layer assignment per node.
   - Greedy layer-by-layer search from entry point.
@@ -150,13 +150,10 @@ Point Needle at your directories. Within minutes, every file is indexed. Type a 
 
 ### Out of scope (v1)
 
-- GUI / web UI (stretch goal)
-- PDF / DOCX parsing
 - Multi-machine / distributed indexing
-- GPU-accelerated embedding
-- LLM-based answer synthesis
+- GPU-accelerated embedding (we use CPU-based hash projection)
 - Real-time collaboration
-- Cloud sync
+- Cloud sync (we use local-first or Docker-hosted cloud mode)
 
 ---
 

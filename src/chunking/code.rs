@@ -22,8 +22,13 @@ impl super::Chunker for CodeChunker {
         path: &Path,
         language: Language,
     ) -> crate::Result<Vec<Chunk>> {
-        let blocks = extract_blocks(content, language)
-            .unwrap_or_else(|| fallback_blocks(content));
+        let blocks = if content.len() > 1_024 * 1_024 {
+            eprintln!("⚠ File {} exceeds 1MB. Skipping AST parsing to prevent OOM.", path.display());
+            fallback_blocks(content)
+        } else {
+            extract_blocks(content, language)
+                .unwrap_or_else(|| fallback_blocks(content))
+        };
 
         let path_str = path.to_string_lossy().to_string();
         let now = Utc::now().timestamp() as u64;
@@ -106,6 +111,11 @@ fn extract_blocks(content: &str, language: Language) -> Option<Vec<CodeBlock>> {
         Language::TypeScript => tree_sitter_typescript::language_typescript(),
         Language::JavaScript => tree_sitter_typescript::language_typescript(),
         Language::Go => tree_sitter_go::language(),
+        Language::Php => tree_sitter_php::language(),
+        Language::CSharp => tree_sitter_c_sharp::language(),
+        Language::Ruby => tree_sitter_ruby::language(),
+        Language::Shell => tree_sitter_bash::language(),
+        Language::Sql => unsafe { std::mem::transmute(tree_sitter_sql::language()) },
         _ => return None,
     };
 
@@ -119,10 +129,31 @@ fn extract_blocks(content: &str, language: Language) -> Option<Vec<CodeBlock>> {
     let mut blocks = Vec::new();
     collect_nodes(root, content.as_bytes(), &interesting_kinds, language, &mut blocks);
 
-    if blocks.is_empty() {
+    // Sub-chunk God functions
+    let mut sub_chunks = Vec::new();
+    let mut final_blocks = Vec::new();
+    
+    for block in blocks {
+        if block.end_line.saturating_sub(block.start_line) > 150 {
+            let parts = semantic_sub_chunk(&block.text);
+            for mut p in parts {
+                p.start_byte += block.start_byte;
+                p.end_byte += block.start_byte;
+                p.start_line += block.start_line - 1;
+                p.end_line += block.start_line - 1;
+                p.chunk_type = block.chunk_type;
+                sub_chunks.push(p);
+            }
+        } else {
+            final_blocks.push(block);
+        }
+    }
+    final_blocks.extend(sub_chunks);
+
+    if final_blocks.is_empty() {
         None
     } else {
-        Some(blocks)
+        Some(final_blocks)
     }
 }
 
@@ -152,6 +183,11 @@ fn interesting_node_kinds(language: Language) -> Vec<(&'static str, ChunkType)> 
             ("function_declaration", ChunkType::Function),
             ("method_declaration", ChunkType::Method),
             ("type_declaration", ChunkType::Class),
+        ],
+        Language::Php => vec![
+            ("function_definition", ChunkType::Function),
+            ("method_declaration", ChunkType::Method),
+            ("class_declaration", ChunkType::Class),
         ],
         _ => vec![],
     }
@@ -226,8 +262,8 @@ fn collect_nodes(
 // Fallback: sliding line window
 // ---------------------------------------------------------------------------
 
-const FALLBACK_WINDOW: usize = 40;
-const FALLBACK_STEP: usize = 30; // 10-line overlap
+const FALLBACK_WINDOW: usize = 60;
+const FALLBACK_STEP: usize = 45; // 15-line overlap
 
 fn fallback_blocks(content: &str) -> Vec<CodeBlock> {
     let lines: Vec<&str> = content.lines().collect();
@@ -254,6 +290,59 @@ fn fallback_blocks(content: &str) -> Vec<CodeBlock> {
             break;
         }
         start += FALLBACK_STEP;
+    }
+
+    blocks
+}
+
+fn semantic_sub_chunk(content: &str) -> Vec<CodeBlock> {
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    let mut blocks = Vec::new();
+
+    let mut start = 0usize;
+    let mut current_idx = 0usize;
+    
+    while current_idx < total {
+        let is_logical_split = current_idx > start + 30 && (
+            (current_idx > 0 && lines[current_idx].trim().is_empty() && lines[current_idx - 1].trim().is_empty())
+            || lines[current_idx].trim().starts_with("/*") 
+            || lines[current_idx].trim().starts_with("// ---") 
+            || lines[current_idx].trim().starts_with("///")
+        );
+
+        let force_split = current_idx - start >= 100;
+
+        if (is_logical_split || force_split) && current_idx - start > 15 {
+            let text = lines[start..current_idx].join("\n");
+            let byte_start = lines[..start].iter().map(|l| l.len() + 1).sum::<usize>();
+            let byte_end = byte_start + text.len();
+
+            blocks.push(CodeBlock {
+                text,
+                start_byte: byte_start,
+                end_byte: byte_end,
+                start_line: start as u32 + 1,
+                end_line: current_idx as u32,
+                chunk_type: ChunkType::Function,
+            });
+            start = current_idx;
+        }
+        current_idx += 1;
+    }
+
+    if start < total {
+        let text = lines[start..total].join("\n");
+        let byte_start = lines[..start].iter().map(|l| l.len() + 1).sum::<usize>();
+        let byte_end = byte_start + text.len();
+        blocks.push(CodeBlock {
+            text,
+            start_byte: byte_start,
+            end_byte: byte_end,
+            start_line: start as u32 + 1,
+            end_line: total as u32,
+            chunk_type: ChunkType::Function,
+        });
     }
 
     blocks

@@ -153,6 +153,16 @@ async fn build_index(
     let mut filemap: HashMap<String, Vec<u64>> = HashMap::new();
 
     for mut chunk in raw_chunks {
+        // Phase 2: Legacy Vocabulary Mapping
+        if chunk.chunk_type == needle::schema::ChunkType::Function {
+            if let Ok(terms) = needle::llm::expand_legacy_vocabulary(&chunk.content).await {
+                if !terms.is_empty() {
+                    chunk.content.push_str("\n// Semantic Expansions: ");
+                    chunk.content.push_str(&terms);
+                }
+            }
+        }
+
         let chunk_id = index.next_id();
         chunk.id = chunk_id;
         chunk.embedding_id = chunk_id;

@@ -1,11 +1,16 @@
+pub mod audit;
 pub mod bench;
 pub mod config;
+pub mod doctor;
 pub mod graph;
 pub mod init;
+pub mod ledger;
 pub mod mcp;
+pub mod policy;
 pub mod reindex;
 pub mod report;
 pub mod search;
 pub mod serve;
 pub mod status;
 pub mod watch;
+pub mod fix;

@@ -1,0 +1,1 @@
+EVP_DigestInit_ex(mdctx, EVP_md5(), NULL);

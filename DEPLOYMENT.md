@@ -440,7 +440,7 @@ In VS Code Settings (`Ctrl+,`) search for **Needle**, or add to `settings.json`:
 
 ## 7. MCP Server (AI Tools)
 
-Needle exposes an **11-tool MCP server** over stdio, giving AI agents structured access to your indexed codebase.
+Needle exposes a **14-tool MCP server** over stdio, giving AI agents structured access to your indexed codebase.
 
 ### Start the MCP server
 
@@ -464,6 +464,9 @@ needle mcp
 | `get_file_structure` | `path` | Directory/module tree |
 | `get_stats` | — | Index summary (chunks, nodes, edges, languages) |
 | `explain` | `name` | LLM-based explanation of a symbol (requires API key) |
+| `get_health_score` | — | Codebase health score breakdown (0–100) |
+| `get_security_scan` | — | Scan for secrets, XSS, and SQL injection vulnerabilities |
+| `blast_radius` | `file` | Affected files and impact risk if a file changes |
 
 ---
 
@@ -921,7 +924,7 @@ d:\NEEDLE\
 │   ├── cli/
 │   │   ├── init.rs                # `needle init` — index build
 │   │   ├── serve.rs               # `needle serve` — Axum server + all route handlers
-│   │   ├── mcp.rs                 # `needle mcp` — stdio MCP server (11 tools)
+│   │   ├── mcp.rs                 # `needle mcp` — stdio MCP server (14 tools)
 │   │   ├── report.rs              # `needle report` — architectural Markdown report
 │   │   ├── bench.rs               # `needle bench` — latency benchmarks
 │   │   └── search.rs              # `needle search` — CLI terminal search

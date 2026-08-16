@@ -289,3 +289,136 @@ pub(super) fn blast_radius(args: &Value, g: &CodeGraph) -> Result<String, String
 
     Ok(out)
 }
+
+pub(super) fn analyze_legacy_code(args: &Value, g: &CodeGraph) -> Result<String, String> {
+    let file = args["file"].as_str().unwrap_or("");
+    if file.is_empty() { return Err("file is required".into()); }
+
+    let result = analysis::blast_radius(g, file);
+    
+    let mut out = format!("## Legacy Modernization Plan: `{}`\n\n", file);
+    out.push_str("### 1. Decoupling Strategy\n");
+    if result.total_files > 10 {
+        out.push_str("This file is a **God Object** with high coupling. Before refactoring, extract its interfaces into a separate module.\n");
+    } else {
+        out.push_str("Coupling is manageable. You can begin encapsulating global state and refactoring function signatures safely.\n");
+    }
+    
+    out.push_str("\n### 2. Immediate Risk (Blast Radius)\n");
+    out.push_str(&format!("Refactoring this file will affect **{} downstream files** with a risk score of {}.\n", result.total_files, result.risk_score));
+    
+    out.push_str("\n### 3. Suggested AI Prompt for Refactoring\n");
+    out.push_str("```text\nRefactor this code to use dependency injection, replace global variables with explicit state passing, and extract nested database queries into a repository pattern.\n```\n");
+    
+    Ok(out)
+}
+
+pub(super) fn find_dead_code(g: &CodeGraph) -> Result<String, String> {
+    let mut in_degrees = std::collections::HashMap::new();
+    for e in &g.edges {
+        if matches!(e.kind, EdgeKind::Calls | EdgeKind::Reads | EdgeKind::Writes) {
+            *in_degrees.entry(e.to).or_insert(0) += 1;
+        }
+    }
+    
+    let mut dead = Vec::new();
+    for n in &g.nodes {
+        if matches!(n.kind, NodeKind::Function | NodeKind::Method | NodeKind::GlobalState | NodeKind::DatabaseTable) {
+            let name_lower = n.name.to_lowercase();
+            // Ignore common entry points like main, init, tests
+            if name_lower == "main" || name_lower.contains("test") || name_lower == "init" {
+                continue;
+            }
+            if *in_degrees.get(&n.id).unwrap_or(&0) == 0 {
+                dead.push(n);
+            }
+        }
+    }
+    
+    if dead.is_empty() {
+        return Ok("No dead code found. All functions have at least one caller.".to_string());
+    }
+    
+    let mut out = format!("## Dead Code Candidates ({} found)\n\n", dead.len());
+    out.push_str("These symbols have **0 incoming calls/reads** in the indexed call graph. They are safe candidates for pruning.\n\n");
+    
+    for n in dead.iter().take(20) {
+        let label = node_kind_label(&n.kind);
+        out.push_str(&format!("- **{}** ({}) — `{}:{}`\n", n.name, label, n.file_path, n.line_start));
+    }
+    if dead.len() > 20 {
+        out.push_str(&format!("\n...and {} more.\n", dead.len() - 20));
+    }
+    
+    Ok(out)
+}
+
+pub(super) fn isolate_microservice(args: &Value, g: &CodeGraph) -> Result<String, String> {
+    let cluster_id = args["cluster_id"].as_u64().unwrap_or(u64::MAX) as u32;
+    if cluster_id == u32::MAX {
+        return Err("cluster_id is required".into());
+    }
+    
+    let communities = graph::compute_communities(g);
+    
+    let mut internal_nodes = std::collections::HashSet::new();
+    for (&node_id, &comm_id) in &communities {
+        if comm_id == cluster_id {
+            internal_nodes.insert(node_id);
+        }
+    }
+    
+    if internal_nodes.is_empty() {
+        return Ok(format!("Cluster {} not found or is empty.", cluster_id));
+    }
+    
+    let mut incoming_edges = Vec::new();
+    let mut outgoing_edges = Vec::new();
+    
+    for e in &g.edges {
+        if !matches!(e.kind, EdgeKind::Calls) { continue; }
+        let from_internal = internal_nodes.contains(&e.from);
+        let to_internal = internal_nodes.contains(&e.to);
+        
+        if from_internal && !to_internal {
+            outgoing_edges.push(e);
+        } else if !from_internal && to_internal {
+            incoming_edges.push(e);
+        }
+    }
+    
+    let mut out = format!("## Microservice Isolation Plan: Cluster {}\n\n", cluster_id);
+    out.push_str(&format!("**Size:** {} internal nodes\n\n", internal_nodes.len()));
+    
+    out.push_str("### 1. Inbound API Surface (REST/gRPC Interface)\n");
+    out.push_str("Other parts of the monolith call these functions. You must expose these as API endpoints:\n");
+    if incoming_edges.is_empty() {
+        out.push_str("- *None (No incoming calls)*\n");
+    } else {
+        let mut unique_in = std::collections::HashSet::new();
+        for e in incoming_edges {
+            if unique_in.insert(e.to) {
+                if let Some(n) = g.nodes.get(e.to as usize) {
+                    out.push_str(&format!("- `POST /api/{}` (mapped to {})\n", n.name.to_lowercase(), n.name));
+                }
+            }
+        }
+    }
+    
+    out.push_str("\n### 2. Outbound Dependencies (Mock/Proxy)\n");
+    out.push_str("This cluster calls these external monolith functions. You must mock these or call them via API:\n");
+    if outgoing_edges.is_empty() {
+        out.push_str("- *None (Self-contained!)*\n");
+    } else {
+        let mut unique_out = std::collections::HashSet::new();
+        for e in outgoing_edges {
+            if unique_out.insert(e.to) {
+                if let Some(n) = g.nodes.get(e.to as usize) {
+                    out.push_str(&format!("- `{}` (needs RPC client)\n", n.name));
+                }
+            }
+        }
+    }
+    
+    Ok(out)
+}

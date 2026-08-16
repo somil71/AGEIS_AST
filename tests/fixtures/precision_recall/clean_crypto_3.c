@@ -1,0 +1,1 @@
+EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL);

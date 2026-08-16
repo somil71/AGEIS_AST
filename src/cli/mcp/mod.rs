@@ -21,6 +21,7 @@
 //! LLM for explain: set ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, or run Ollama.
 
 mod tools_graph;
+pub mod tools_policy;
 mod tools_search;
 
 use needle::{
@@ -81,13 +82,20 @@ pub(super) struct CloudConfig {
 
 impl CloudConfig {
     fn from_env() -> Option<Self> {
-        Some(Self {
-            api_key:  std::env::var("NEEDLE_API_KEY").ok()?,
-            base_url: std::env::var("NEEDLE_CLOUD_URL")
-                .ok()?
-                .trim_end_matches('/')
-                .to_string(),
-        })
+        #[cfg(feature = "cloud")]
+        {
+            Some(Self {
+                api_key:  std::env::var("NEEDLE_API_KEY").ok()?,
+                base_url: std::env::var("NEEDLE_CLOUD_URL")
+                    .ok()?
+                    .trim_end_matches('/')
+                    .to_string(),
+            })
+        }
+        #[cfg(not(feature = "cloud"))]
+        {
+            None
+        }
     }
 }
 
@@ -234,8 +242,11 @@ async fn dispatch_tool(
             dispatch_search_tools(name, args, local, cloud, llm).await,
         "find_callers" | "find_callees" | "get_endpoints" | "get_file_structure"
         | "get_god_nodes" | "get_communities" | "get_surprises" | "get_health_score"
-        | "blast_radius" =>
+        | "blast_radius" | "analyze_legacy_code" | "find_dead_code" | "isolate_microservice" =>
             dispatch_graph_tools(name, args, local),
+        "get_obligations" | "check_compliance" | "get_policy_gaps" | "get_compliance_report" => {
+            dispatch_policy_tools(name, args)
+        }
         unknown => Err(format!("Unknown tool: {unknown}")),
     }
 }
@@ -275,12 +286,26 @@ fn dispatch_graph_tools(
         "get_surprises"      => tools_graph::get_surprises(graph),
         "get_health_score"   => tools_graph::get_health_score(graph),
         "blast_radius"       => tools_graph::blast_radius(args, graph),
+        "analyze_legacy_code" => tools_graph::analyze_legacy_code(args, graph),
+        "find_dead_code"      => tools_graph::find_dead_code(graph),
+        "isolate_microservice" => tools_graph::isolate_microservice(args, graph),
         unknown => Err(format!("Unknown graph tool: {unknown}")),
+    }
+}
+
+fn dispatch_policy_tools(name: &str, args: &Value) -> Result<String, String> {
+    match name {
+        "get_obligations"       => tools_policy::get_obligations(args),
+        "check_compliance"      => tools_policy::check_compliance(args),
+        "get_policy_gaps"       => tools_policy::get_policy_gaps(args),
+        "get_compliance_report" => tools_policy::get_compliance_report(args),
+        unknown => Err(format!("Unknown policy tool: {unknown}")),
     }
 }
 
 // ── Cloud helpers ─────────────────────────────────────────────────────────────
 
+#[cfg(feature = "cloud")]
 pub(super) async fn cloud_search(cfg: &CloudConfig, query: &str, limit: usize) -> Vec<ApiSearchResult> {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -320,6 +345,12 @@ pub(super) async fn cloud_search(cfg: &CloudConfig, query: &str, limit: usize) -
         .collect()
 }
 
+#[cfg(not(feature = "cloud"))]
+pub(super) async fn cloud_search(_cfg: &CloudConfig, _query: &str, _limit: usize) -> Vec<ApiSearchResult> {
+    vec![]
+}
+
+#[cfg(feature = "cloud")]
 pub(super) async fn cloud_similar(cfg: &CloudConfig, code: &str, limit: usize) -> Vec<ApiSearchResult> {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -354,6 +385,11 @@ pub(super) async fn cloud_similar(cfg: &CloudConfig, code: &str, limit: usize) -
         .collect()
 }
 
+#[cfg(not(feature = "cloud"))]
+pub(super) async fn cloud_similar(_cfg: &CloudConfig, _code: &str, _limit: usize) -> Vec<ApiSearchResult> {
+    vec![]
+}
+
 pub(super) fn display_cloud_path(path: &str) -> String {
     let norm = path.replace('\\', "/");
     if let Some(pos) = norm.find("/src/") {
@@ -376,6 +412,8 @@ pub(super) fn node_kind_label(kind: &NodeKind) -> &'static str {
         NodeKind::Struct   => "struct",
         NodeKind::Trait    => "trait",
         NodeKind::Endpoint => "endpoint",
+        NodeKind::GlobalState => "global",
+        NodeKind::DatabaseTable => "table",
     }
 }
 
@@ -388,6 +426,8 @@ pub(super) fn node_kind_order(kind: &NodeKind) -> u8 {
         NodeKind::Function => 4,
         NodeKind::Method   => 5,
         NodeKind::Module   => 6,
+        NodeKind::GlobalState => 7,
+        NodeKind::DatabaseTable => 8,
     }
 }
 
@@ -520,6 +560,58 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["file"]
             }
+        },
+        {
+            "name": "analyze_legacy_code",
+            "description": "Analyzes a given legacy code file to suggest modernization strategies, decouple tightly coupled components, and identify refactoring risks. Returns a refactoring plan.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Legacy file path to analyze" }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "find_dead_code",
+            "description": "Scans the call graph to identify unreachable functions (0 incoming edges). Ideal for safely pruning legacy monolithic code.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "isolate_microservice",
+            "description": "Given a community/cluster ID, analyzes cross-boundary edges to generate the exact REST/gRPC interfaces needed to carve it out of the monolith.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cluster_id": { "type": "integer", "description": "The community ID (from get_communities)" }
+                },
+                "required": ["cluster_id"]
+            }
+        }
+        ,
+        {
+            "name": "get_obligations",
+            "description": "List all ingested policy obligations. Optional `doc` filter by policy name or ID.",
+            "inputSchema": { "type": "object", "properties": { "doc": { "type": "string", "description": "Filter by policy name or ID (optional)" } } }
+        },
+        {
+            "name": "check_compliance",
+            "description": "Run the compliance linker for a specific policy obligation. Returns whether it is Satisfied, Violated, or has NoImplementationFound in the code index.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "obligation_id": { "type": "string", "description": "The obligation ID from get_obligations" } },
+                "required": ["obligation_id"]
+            }
+        },
+        {
+            "name": "get_policy_gaps",
+            "description": "Return all policy obligations for which no code implementation was found — the compliance gaps. Optional `doc` filter.",
+            "inputSchema": { "type": "object", "properties": { "doc": { "type": "string", "description": "Filter by policy name or ID (optional)" } } }
+        },
+        {
+            "name": "get_compliance_report",
+            "description": "Run the full compliance audit across all ingested policies and return a Markdown report. Pass `format: 'json'` for structured output.",
+            "inputSchema": { "type": "object", "properties": { "format": { "type": "string", "description": "Output format: 'markdown' (default) or 'json'" } } }
         }
     ])
 }

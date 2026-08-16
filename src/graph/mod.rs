@@ -47,6 +47,8 @@ pub enum NodeKind {
     Struct,
     Trait,
     Endpoint,
+    GlobalState,
+    DatabaseTable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,6 +58,8 @@ pub enum EdgeKind {
     Imports,
     Calls,
     Inherits,
+    Reads,
+    Writes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +239,121 @@ pub fn extract(file_entries: &[(PathBuf, Language, String)]) -> CodeGraph {
                     }
                 }
             }
+        }
+    }
+
+    // ── Pass 3.5: Embedded SQL Database extraction (Phase 2) ──────────────────
+    for (path, _lang, content) in file_entries {
+        let fp = path.to_string_lossy().to_string();
+        let from_id = *file_module.get(&fp).unwrap();
+        
+        let upper = content.to_uppercase();
+        if upper.contains("SELECT ") || upper.contains("INSERT INTO ") || upper.contains("UPDATE ") || upper.contains("FROM ") {
+            let mut tables = HashSet::new();
+            
+            let tokens: Vec<&str> = upper.split(|c: char| !c.is_alphanumeric() && c != '_').collect();
+            for i in 0..tokens.len() {
+                if i + 1 < tokens.len() {
+                    let mut is_target = false;
+                    if tokens[i] == "FROM" || tokens[i] == "UPDATE" || tokens[i] == "JOIN" {
+                        is_target = true;
+                    } else if i > 0 && tokens[i-1] == "INSERT" && tokens[i] == "INTO" {
+                        is_target = true;
+                    }
+                    
+                    if is_target {
+                        let table_name = tokens[i+1];
+                        if !table_name.is_empty() && table_name != "SELECT" && table_name.len() > 2 {
+                            tables.insert(table_name.to_string());
+                        }
+                    }
+                }
+            }
+            
+            for table in tables {
+                let node_id = name_index.get(&table).and_then(|ids| ids.first().copied()).unwrap_or_else(|| {
+                    let new_id = nodes.len() as u32;
+                    nodes.push(GraphNode {
+                        id: new_id,
+                        name: table.clone(),
+                        kind: NodeKind::DatabaseTable,
+                        file_path: "DB".to_string(),
+                        line_start: 1,
+                        line_end: 1,
+                        language: "sql".to_string(),
+                        detail: Some("Embedded SQL".to_string()),
+                    });
+                    name_index.entry(table.clone()).or_default().push(new_id);
+                    new_id
+                });
+                
+                let kind = if upper.contains("UPDATE ") || upper.contains("INSERT ") { EdgeKind::Writes } else { EdgeKind::Reads };
+                edges.push(GraphEdge { from: from_id, to: node_id, kind });
+            }
+        }
+    }
+
+    // ── Pass 3.6: Global State Tracking ───────────────────────────────────────
+    for (path, lang, content) in file_entries {
+        let fp = path.to_string_lossy().to_string();
+        let from_id = *file_module.get(&fp).unwrap();
+        
+        let mut globals = Vec::new();
+        match lang {
+            Language::Rust => {
+                for line in content.lines() {
+                    if line.contains("static mut ") || (line.contains("static ") && !line.contains(" lazy_static")) {
+                        let name_start = line.find("static mut ").map(|i| i + 11).or_else(|| line.find("static ").map(|i| i + 7));
+                        if let Some(start) = name_start {
+                            if let Some(end) = line[start..].find(':') {
+                                globals.push(line[start..start+end].trim().to_string());
+                            }
+                        }
+                    }
+                }
+            },
+            Language::Python => {
+                for line in content.lines() {
+                    if line.trim().starts_with("global ") {
+                        globals.push(line.trim()[7..].trim().to_string());
+                    }
+                }
+            },
+            Language::JavaScript | Language::TypeScript => {
+                for line in content.lines() {
+                    if let Some(idx) = line.find("window.") {
+                        if let Some(end_idx) = line[idx+7..].find(|c: char| !c.is_alphanumeric() && c != '_') {
+                            let name = &line[idx+7..idx+7+end_idx];
+                            if !name.is_empty() {
+                                globals.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+
+        for var in globals {
+            let node_id = name_index.get(&var).and_then(|ids| ids.first().copied()).unwrap_or_else(|| {
+                let new_id = nodes.len() as u32;
+                nodes.push(GraphNode {
+                    id: new_id,
+                    name: var.clone(),
+                    kind: NodeKind::GlobalState,
+                    file_path: fp.clone(),
+                    line_start: 1,
+                    line_end: 1,
+                    language: lang.short_name().to_string(),
+                    detail: Some("Global Variable".to_string()),
+                });
+                name_index.entry(var.clone()).or_default().push(new_id);
+                new_id
+            });
+            
+            // Assume it's a state mutation/read for blast radius graph
+            edges.push(GraphEdge { from: from_id, to: node_id, kind: EdgeKind::Writes });
+            edges.push(GraphEdge { from: from_id, to: node_id, kind: EdgeKind::Reads });
         }
     }
 

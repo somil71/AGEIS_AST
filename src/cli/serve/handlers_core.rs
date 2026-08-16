@@ -453,3 +453,14 @@ fn to_result_json(r: needle::schema::SearchResult) -> ResultJson {
 fn strip_unc(path: &str) -> String {
     needle::analysis::strip_unc(path)
 }
+
+
+pub(super) async fn api_events(State(state): State<AppState>) -> axum::response::sse::Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
+    let mut rx = state.tx.subscribe();
+    let stream = async_stream::stream! {
+        while let Ok(msg) = rx.recv().await {
+            yield Ok(axum::response::sse::Event::default().data(msg));
+        }
+    };
+    axum::response::sse::Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
+}

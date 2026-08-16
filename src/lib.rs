@@ -10,10 +10,13 @@ pub mod embedding;
 pub mod error;
 pub mod graph;
 pub mod indexing;
+pub mod ledger;
 pub mod llm;
+pub mod policy;
 pub mod query;
 pub mod schema;
 pub mod storage;
+#[cfg(feature = "cloud")]
 pub mod server;
 pub mod watcher;
 

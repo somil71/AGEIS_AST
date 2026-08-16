@@ -17,13 +17,12 @@ its on-disk format, and how structures reference each other.
 │   ├── inverted.idx             # BM25 inverted index (mmap'd)
 │   ├── hnsw.idx                 # HNSW graph structure (mmap'd)
 │   ├── embeddings.bin           # raw float32 vectors (mmap'd)
-│   ├── filemap.idx              # file_path → chunk_id[] mapping
+│   └── filemap.idx              # file_path → chunk_id[] mapping
 │   └── wal/
 │       ├── segment_000001.wal
 │       ├── segment_000002.wal
 │       └── ...
-└── models/
-    └── minilm-l6-v2.onnx
+└─── ...
 ```
 
 ---
@@ -209,7 +208,7 @@ Raw float32 vectors, one per chunk, laid out for direct mmap access.
 
 ```
 EmbeddingStore {
-    dim:        u32,            # 384 for MiniLM
+    dim:        u32,            # 384 for hash-projection
     count:      u64,            # total vectors stored (including tombstoned slots)
     vectors:    [f32; count × dim],  # flat contiguous array
 }
@@ -358,7 +357,7 @@ IndexMeta {
     total_files:        u64,
     total_chunks:       u64,
     total_tombstoned:   u64,
-    embedding_model:    String,     # "all-MiniLM-L6-v2"
+    embedding_model:    String,     # "hash-projection-384"
     embedding_dim:      u32,        # 384
     hnsw_M:             u16,
     hnsw_ef_construction: u32,

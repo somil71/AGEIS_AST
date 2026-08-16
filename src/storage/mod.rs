@@ -26,6 +26,15 @@ impl Storage {
     pub fn new(index_dir: PathBuf) -> crate::Result<Self> {
         std::fs::create_dir_all(&index_dir)?;
         std::fs::create_dir_all(index_dir.join("wal"))?;
+        
+        // Ensure .needle is gitignored to prevent ledger key and index leakage
+        if let Some(parent) = index_dir.parent() {
+            let gitignore = parent.join(".gitignore");
+            if !gitignore.exists() {
+                let _ = std::fs::write(gitignore, "*\n");
+            }
+        }
+        
         Ok(Self { index_dir })
     }
 
@@ -201,6 +210,27 @@ impl Storage {
     }
 
     // -----------------------------------------------------------------------
+    // File hashes (xxhash3): path → hash (for incremental update)
+    // -----------------------------------------------------------------------
+
+    pub fn save_file_hashes(&self, map: &HashMap<String, u64>) -> crate::Result<()> {
+        let path = self.index_dir.join("file_hashes.json");
+        let json = serde_json::to_string(map)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    pub fn load_file_hashes(&self) -> crate::Result<HashMap<String, u64>> {
+        let path = self.index_dir.join("file_hashes.json");
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let map: HashMap<String, u64> = serde_json::from_str(&content)?;
+        Ok(map)
+    }
+
+    // -----------------------------------------------------------------------
     // Knowledge graph
     // -----------------------------------------------------------------------
 
@@ -219,6 +249,76 @@ impl Storage {
         let content = std::fs::read_to_string(&path)?;
         let graph: CodeGraph = serde_json::from_str(&content)?;
         Ok(graph)
+    }
+
+    // -----------------------------------------------------------------------
+    // Policy Store (.needle/policy/<policy_id>.json)
+    // -----------------------------------------------------------------------
+
+    pub fn default_policy_dir() -> PathBuf {
+        let root = Self::find_git_root()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+        root.join(".needle").join("policy")
+    }
+
+    pub fn policy_dir(&self) -> PathBuf {
+        if let Some(parent) = self.index_dir.parent() {
+            parent.join("policy")
+        } else {
+            Self::default_policy_dir()
+        }
+    }
+
+    pub fn save_policy(&self, doc: &crate::policy::clause::PolicyDocument) -> crate::Result<()> {
+        let dir = self.policy_dir();
+        std::fs::create_dir_all(&dir)?;
+        let file_name = format!("{}.json", doc.id);
+        let path = dir.join(file_name);
+        let json = serde_json::to_string_pretty(doc)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    pub fn load_policy(&self, id: &str) -> crate::Result<crate::policy::clause::PolicyDocument> {
+        let dir = self.policy_dir();
+        let file_name = if id.ends_with(".json") {
+            id.to_string()
+        } else {
+            format!("{}.json", id)
+        };
+        let path = dir.join(&file_name);
+        if !path.exists() {
+            return Err(crate::error::Error::PolicyError(format!(
+                "Policy with ID '{}' not found at '{}'",
+                id,
+                path.display()
+            )));
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let doc: crate::policy::clause::PolicyDocument = serde_json::from_str(&content)?;
+        Ok(doc)
+    }
+
+    pub fn list_policies(&self) -> crate::Result<Vec<crate::policy::clause::PolicyDocument>> {
+        let dir = self.policy_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut policies = Vec::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(doc) = serde_json::from_str::<crate::policy::clause::PolicyDocument>(&content) {
+                        policies.push(doc);
+                    }
+                }
+            }
+        }
+        policies.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(policies)
     }
 
     // -----------------------------------------------------------------------

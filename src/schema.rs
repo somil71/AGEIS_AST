@@ -39,6 +39,11 @@ pub enum Language {
     Dockerfile,
     Shell,
     Pdf,
+    Php,
+    CSharp,
+    Ruby,
+    Cobol,
+    Sql,
 }
 
 impl Language {
@@ -60,6 +65,11 @@ impl Language {
             "dockerfile" => Some(Language::Dockerfile),
             "sh" | "bash" | "zsh" => Some(Language::Shell),
             "pdf" => Some(Language::Pdf),
+            "php" | "phtml" => Some(Language::Php),
+            "cs" => Some(Language::CSharp),
+            "rb" => Some(Language::Ruby),
+            "cbl" | "cob" | "cpy" => Some(Language::Cobol),
+            "sql" => Some(Language::Sql),
             _ => None,
         }
     }
@@ -81,6 +91,7 @@ impl Language {
             "json" => Some(Language::Json),
             "sh" | "bash" | "shell" => Some(Language::Shell),
             "pdf" => Some(Language::Pdf),
+            "php" => Some(Language::Php),
             _ => None,
         }
     }
@@ -103,6 +114,11 @@ impl Language {
             Language::Dockerfile => "Dockerfile",
             Language::Shell => "Shell",
             Language::Pdf => "PDF",
+            Language::Php => "PHP",
+            Language::CSharp => "C#",
+            Language::Ruby => "Ruby",
+            Language::Cobol => "COBOL",
+            Language::Sql => "SQL",
         }
     }
 
@@ -120,6 +136,11 @@ impl Language {
             Language::Yaml => "language-yaml",
             Language::Json => "language-json",
             Language::Shell => "language-bash",
+            Language::Php => "language-php",
+            Language::CSharp => "language-csharp",
+            Language::Ruby => "language-ruby",
+            Language::Cobol => "language-cobol",
+            Language::Sql => "language-sql",
             Language::PlainText | Language::Dockerfile | Language::Pdf => "language-plaintext",
         }
     }
@@ -142,6 +163,11 @@ impl Language {
             Language::Dockerfile => "dockerfile",
             Language::Shell => "sh",
             Language::Pdf => "pdf",
+            Language::Php => "php",
+            Language::CSharp => "cs",
+            Language::Ruby => "rb",
+            Language::Cobol => "cbl",
+            Language::Sql => "sql",
         }
     }
 }

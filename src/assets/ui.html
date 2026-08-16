@@ -644,8 +644,14 @@ html.light .terminal-mock { background: #1a1a1a; }
   gap: 14px; margin-bottom: 40px;
 }
 .stat-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.15);
 }
 .stat-label { font-size: 0.8125rem; color: var(--text-3); margin-bottom: 6px; font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase; }
 .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--text); line-height: 1; }
@@ -5137,7 +5143,7 @@ function _setupSVG() {
     document.getElementById('graph-detail').classList.remove('open');
     d3.select('#graph-svg').selectAll('.nodes g').attr('opacity', null);
     d3.select('#graph-svg').selectAll('.links line,.links path')
-      .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38);
+      .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9);
   });
   return { svg, g, W, H };
 }
@@ -5223,15 +5229,15 @@ function _addLinks(g, simLinks) {
   if (curved) {
     return g.append('g').attr('class','links').selectAll('path').data(simLinks).join('path')
       .attr('fill','none')
-      .attr('stroke', d => EDGE_COLOR[d.kind]||'#555')
-      .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38)
-      .attr('stroke-width', 1.2)
+      .attr('stroke', d => EDGE_COLOR[d.kind]||'#888')
+      .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9)
+      .attr('stroke-width', 2.0)
       .attr('marker-end', d => d.kind!=='contains'?`url(#arr-${d.kind})`:null);
   }
   return g.append('g').attr('class','links').selectAll('line').data(simLinks).join('line')
-    .attr('stroke', d => EDGE_COLOR[d.kind]||'#555')
-    .attr('stroke-opacity', d => d.kind==='contains'?0.1:0.38)
-    .attr('stroke-width', 1.2)
+    .attr('stroke', d => EDGE_COLOR[d.kind]||'#888')
+    .attr('stroke-opacity', d => d.kind==='contains'?0.3:0.9)
+    .attr('stroke-width', 2.0)
     .attr('marker-end', d => d.kind!=='contains'?`url(#arr-${d.kind})`:null);
 }
 
@@ -5393,7 +5399,7 @@ function _renderRadial() {
     });
 
   const link = g.append('g').attr('class','links').selectAll('path').data(simLinks).join('path')
-    .attr('fill','none').attr('stroke',d=>EDGE_COLOR[d.kind]||'#555')
+    .attr('fill','none').attr('stroke',d=>EDGE_COLOR[d.kind]||'#888')
     .attr('stroke-opacity',0.2).attr('stroke-width',1)
     .attr('d', d => `M${d.source.x},${d.source.y}Q${W/2},${H/2},${d.target.x},${d.target.y}`);
 

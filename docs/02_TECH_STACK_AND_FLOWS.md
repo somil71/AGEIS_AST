@@ -14,9 +14,7 @@ The entire engine is Rust. This isn't a style choice — the project's hard part
 |---|---|---|
 | **CLI framework** | `clap` | Derive-based arg parsing, sub-commands, shell completions |
 | **AST parsing** | `tree-sitter` + language grammars (`tree-sitter-python`, `tree-sitter-typescript`, `tree-sitter-rust`, `tree-sitter-go`) | Code-aware chunking on function/class boundaries |
-| **Embeddings** | `ort` (ONNX Runtime Rust bindings) | Local inference of sentence-transformer, no Python needed |
-| **Embedding model** | `all-MiniLM-L6-v2` (ONNX export, 384-dim, ~80MB) | Small, fast, good general-purpose sentence embeddings |
-| **Tokenizer** | `tokenizers` (HuggingFace Rust) | WordPiece tokenization for the embedding model |
+| **Embeddings** | built-in hash-projection | 384-dim local/offline embeddings, zero extra latency, no dependencies |
 | **File watching** | `notify` | Cross-platform fs events (inotify / FSEvents / ReadDirectoryChanges) |
 | **Memory mapping** | `memmap2` | Zero-copy index loading, OS page cache handles hot/cold |
 | **Hashing** | `xxhash-rust` | Content hashing for chunk dedup (xxh3, ~30GB/s) |
@@ -31,9 +29,9 @@ The entire engine is Rust. This isn't a style choice — the project's hard part
 
 - No vector database (Qdrant, Pinecone, etc.) — HNSW is hand-rolled.
 - No search engine library (Tantivy, Meilisearch) — inverted index is hand-rolled.
-- No Python — embedding runs via ONNX Runtime in-process.
-- No GPU required — CPU inference is fast enough for the embedding model at indexing time.
-- No network stack — no HTTP server in v1 (CLI only). Stretch web UI uses a lightweight embedded server (`axum`).
+- No Python, no ONNX Runtime by default — embedding runs via built-in hash-projection in-process.
+- No GPU required — CPU hash-projection or Ollama is fast enough for indexing.
+- Embedded Axum HTTP server serves both the web UI and REST API.
 
 ### Build and CI
 
@@ -44,13 +42,11 @@ The entire engine is Rust. This isn't a style choice — the project's hard part
 | GitHub Actions | CI: `cargo clippy`, `cargo test`, `cargo bench`, HNSW recall regression |
 | `cargo-release` | Versioned releases with changelogs |
 
-### Stretch stack (not v1)
-
-| Component | Tool | When |
-|---|---|---|
-| Web UI | `axum` (backend) + vanilla HTML/JS (frontend) | After CLI is solid |
-| VS Code extension | TypeScript + Needle as subprocess | After web UI |
-| Code-specific embeddings | `codesage-small` or `unixcoder` ONNX export | After general embeddings prove out |
+### Architecture Status
+- **Web UI**: Fully implemented as a single-page app in `src/assets/ui.html` and served via `needle serve`.
+- **VS Code Extension**: Fully implemented in `needle-vscode/` to provide search sidebar.
+- **MCP Server**: Fully implemented (14 tools) over stdio.
+- **Desktop App**: Tauri v2 desktop app wrapper is ready in `src-tauri/`.
 
 ---
 
@@ -70,12 +66,8 @@ User runs: needle init ~/code ~/notes ~/docs
      │   ├── chunks.store     (chunk content + metadata, mmap'd)
      │   ├── embeddings.bin   (raw f32 vectors, mmap'd)
      │   └── wal/             (write-ahead log segments)
-     └── models/
-         └── minilm-l6-v2.onnx  (downloaded on first init if missing)
 
-  3. If embedding model not present:
-     → Download all-MiniLM-L6-v2.onnx from bundled URL or local cache.
-     → Verify checksum.
+  3. Load built-in hash-projection model parameters or connect to Ollama (if configured).
 
   4. Walk all configured directories recursively.
      → Apply ignore patterns (.git, node_modules, etc.).
@@ -94,9 +86,8 @@ User runs: needle init ~/code ~/notes ~/docs
         ii.  Assign chunk_id (monotonic u64).
         iii. Write chunk metadata to chunks.store.
 
-  6. Embedding pass (parallelized, batched):
-     → Batch chunks into groups of 32.
-     → Run ONNX inference: text → 384-dim f32 vector.
+  6. Embedding pass (parallelized):
+     → Run built-in hash-projection on chunk text → 384-dim f32 vector.
      → Write vectors to embeddings.bin (append, position = chunk_id × 384 × 4 bytes).
 
   7. Build inverted index:

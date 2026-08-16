@@ -1,0 +1,37 @@
+name: 'Sentinel Auditor'
+description: 'Run Sentinel Auditor on your repository to enforce NIST/ISO security compliance'
+inputs:
+  policies-dir:
+    description: 'Path to policy documents'
+    required: false
+    default: '.policies'
+  directories:
+    description: 'Directories to audit'
+    required: false
+    default: '.'
+runs:
+  using: "composite"
+  steps:
+    - name: Download & Install Sentinel Auditor
+      shell: bash
+      run: |
+        # In a real scenario, this would download a pre-compiled binary from GitHub Releases
+        echo "Installing Sentinel Auditor..."
+        curl -L -o sentinel.exe https://github.com/somil71/NEEDLE/releases/latest/download/sentinel.exe || true
+        chmod +x sentinel.exe || true
+
+    - name: Initialize Index
+      shell: bash
+      run: |
+        ./sentinel.exe init ${{ inputs.directories }} || cargo run --bin sentinel -- init ${{ inputs.directories }}
+
+    - name: Ingest Policies
+      shell: bash
+      run: |
+        find ${{ inputs.policies-dir }} -type f \( -name "*.pdf" -o -name "*.md" \) -exec ./sentinel.exe policy ingest {} \; || \
+        find ${{ inputs.policies-dir }} -type f \( -name "*.pdf" -o -name "*.md" \) -exec cargo run --bin sentinel -- policy ingest {} \; || true
+
+    - name: Run Strict Compliance Audit
+      shell: bash
+      run: |
+        ./sentinel.exe audit --strict || cargo run --bin sentinel -- audit --strict

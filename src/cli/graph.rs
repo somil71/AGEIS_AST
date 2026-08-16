@@ -81,10 +81,13 @@ pub async fn run(output: Option<String>) -> needle::Result<()> {
     );
 
     // Open in default browser
-    let abs = std::fs::canonicalize(&out_path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&out_path));
-    if let Err(e) = open::that(&abs) {
-        println!("  (Could not open browser: {e})");
+    #[cfg(feature = "cloud")]
+    {
+        let abs = std::fs::canonicalize(&out_path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&out_path));
+        if let Err(e) = open::that(&abs) {
+            println!("  (Could not open browser: {e})");
+        }
     }
 
     Ok(())

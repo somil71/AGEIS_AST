@@ -13,6 +13,10 @@ pub enum Error {
     QueryError(String),
     ConfigError(String),
     SerializationError(String),
+    PolicyError(String),
+    LedgerError(String),
+    OfflineStrictViolation(String),
+    DoctorError(String),
     Other(Box<dyn std::error::Error>),
 }
 
@@ -28,6 +32,10 @@ impl fmt::Display for Error {
             Error::QueryError(e) => write!(f, "Query error: {}", e),
             Error::ConfigError(e) => write!(f, "Config error: {}", e),
             Error::SerializationError(e) => write!(f, "Serialization error: {}", e),
+            Error::PolicyError(e) => write!(f, "Policy error: {}", e),
+            Error::LedgerError(e) => write!(f, "Ledger error: {}", e),
+            Error::OfflineStrictViolation(e) => write!(f, "Offline-strict violation: {}", e),
+            Error::DoctorError(e) => write!(f, "Doctor error: {}", e),
             Error::Other(e) => write!(f, "Error: {}", e),
         }
     }
@@ -56,5 +64,17 @@ impl From<serde_json::Error> for Error {
 impl From<notify::Error> for Error {
     fn from(e: notify::Error) -> Self {
         Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    }
+}
+
+impl From<ed25519_dalek::SignatureError> for Error {
+    fn from(e: ed25519_dalek::SignatureError) -> Self {
+        Error::LedgerError(format!("Ed25519 signature error: {e}"))
+    }
+}
+
+impl From<hex::FromHexError> for Error {
+    fn from(e: hex::FromHexError) -> Self {
+        Error::LedgerError(format!("Hex decoding error: {e}"))
     }
 }

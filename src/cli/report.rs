@@ -89,13 +89,15 @@ fn build_report(
         for (rank, &(node_id, degree)) in god_nodes.iter().enumerate() {
             let node = &graph.nodes[node_id as usize];
             let kind_str = match node.kind {
-                NodeKind::Function => "fn",
+                NodeKind::Function => "function",
                 NodeKind::Method   => "method",
                 NodeKind::Class    => "class",
                 NodeKind::Struct   => "struct",
                 NodeKind::Trait    => "trait",
                 NodeKind::Endpoint => "endpoint",
                 NodeKind::Module   => "module",
+                NodeKind::GlobalState => "global",
+                NodeKind::DatabaseTable => "table",
             };
             md.push_str(&format!(
                 "| {} | `{}` | {} | {} | `{}` |\n",

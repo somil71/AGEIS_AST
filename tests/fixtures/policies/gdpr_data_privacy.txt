@@ -1,0 +1,10 @@
+EU General Data Protection Regulation (GDPR) Compliance Standard
+
+Article 5: Principles relating to processing of personal data
+Personal data SHALL be processed lawfully, fairly and in a transparent manner. Personal data MUST be collected for specified, explicit and legitimate purposes and not further processed in a manner incompatible with those purposes.
+
+Article 17: Right to erasure (Right to be forgotten)
+The data controller SHALL have the obligation to erase personal data without undue delay where the personal data are no longer necessary in relation to the purposes for which they were collected or otherwise processed.
+
+Article 32: Security of processing
+Taking into account the state of the art, the costs of implementation and the nature of processing, the controller and processor SHALL implement appropriate technical and organizational measures, including pseudonymization and encryption of personal data.
