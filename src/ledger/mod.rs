@@ -133,6 +133,44 @@ pub fn append_to_ledger(
     Ok(block)
 }
 
+/// Compacts the ledger by archiving the current chain and creating a new snapshot block.
+pub fn compact_ledger(ledger_path: &std::path::Path, keypair: &LedgerKeypair) -> Result<LedgerBlock> {
+    if !ledger_path.exists() {
+        return Err(Error::LedgerError("Cannot compact: ledger does not exist.".to_string()));
+    }
+
+    // 1. Verify the current ledger
+    let summary = verify_ledger_file(ledger_path)?;
+    if !summary.is_valid {
+        return Err(Error::LedgerError("Cannot compact: current ledger is invalid or corrupt.".to_string()));
+    }
+    
+    if summary.total_blocks == 0 {
+        return Err(Error::LedgerError("Cannot compact: ledger is empty.".to_string()));
+    }
+
+    // 2. Archive current ledger
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let archive_name = format!("audit_chain_archive_{}.jsonl", timestamp);
+    let archive_path = ledger_path.with_file_name(archive_name);
+    
+    std::fs::rename(ledger_path, &archive_path).map_err(Error::Io)?;
+
+    // 3. Create the snapshot payload
+    let prev_tip = summary.latest_block_hash.unwrap_or_else(|| GENESIS_PREV_HASH.to_string());
+    let payload = serde_json::json!({
+        "compacted_blocks": summary.total_blocks,
+        "previous_chain_tip": prev_tip,
+        "archive_file": archive_path.file_name().unwrap_or_default().to_string_lossy(),
+        "message": "Ledger compacted and archived.",
+    });
+
+    // 4. Append snapshot block to new ledger
+    let block = append_to_ledger(ledger_path, keypair, EntryType::CodebaseSnapshot, payload)?;
+
+    Ok(block)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

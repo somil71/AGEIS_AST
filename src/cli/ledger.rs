@@ -1,4 +1,4 @@
-//! CLI subcommand for cryptographic audit ledger management: `needle ledger [append|verify|keygen]`.
+//! CLI subcommand for cryptographic audit ledger management: `sentinel ledger [append|verify|keygen]`.
 
 use clap::Subcommand;
 use colored::Colorize;
@@ -42,6 +42,17 @@ pub enum LedgerCommands {
         verbose: bool,
     },
 
+    /// Compacts the ledger into a single genesis block and archives the history
+    Snapshot {
+        /// Custom path to ledger file (default: .needle/ledger/audit_chain.jsonl)
+        #[arg(short, long)]
+        ledger: Option<String>,
+
+        /// Path to Ed25519 private key for signing the snapshot
+        #[arg(short, long)]
+        key: Option<String>,
+    },
+
     /// Generate a new Ed25519 keypair for ledger signing
     Keygen {
         /// Output directory for keypair (default: .needle/ledger/)
@@ -64,6 +75,7 @@ pub async fn run(action: LedgerCommands) -> Result<()> {
             gen_key_if_missing,
         } => run_append(report, r#type, key, gen_key_if_missing),
         LedgerCommands::Verify { ledger, verbose } => run_verify(ledger, verbose),
+        LedgerCommands::Snapshot { ledger, key } => run_snapshot(ledger, key),
     }
 }
 
@@ -165,12 +177,12 @@ fn run_append(
         kp
     } else {
         eprintln!(
-            "{}: Private key not found at '{}'.\n  Run `needle ledger keygen` or pass `--gen-key-if-missing`.",
+            "{}: Private key not found at '{}'.\n  Run `sentinel ledger keygen` or pass `--gen-key-if-missing`.",
             "Error".red().bold(),
             priv_key_path.display()
         );
         return Err(Error::LedgerError(format!(
-            "Private key not found at '{}'. Run `needle ledger keygen` or pass `--gen-key-if-missing`.",
+            "Private key not found at '{}'. Run `sentinel ledger keygen` or pass `--gen-key-if-missing`.",
             priv_key_path.display()
         )));
     };
@@ -259,6 +271,57 @@ fn run_verify(ledger: Option<String>, verbose: bool) -> Result<()> {
     println!(
         "  {}: {}",
         "Ledger path".bold(),
+        ledger_path.display().to_string().dimmed()
+    );
+
+    Ok(())
+}
+
+fn run_snapshot(ledger: Option<String>, key: Option<String>) -> Result<()> {
+    use needle::ledger::compact_ledger;
+
+    let ledger_path = match ledger {
+        Some(l) => PathBuf::from(l),
+        None => default_ledger_path(),
+    };
+
+    let priv_key_path = match key {
+        Some(k) => PathBuf::from(k),
+        None => default_key_priv_path(),
+    };
+
+    if !priv_key_path.exists() {
+        eprintln!(
+            "{}: Private key not found at '{}'.\n  Run `sentinel ledger keygen` to generate one.",
+            "Error".red().bold(),
+            priv_key_path.display()
+        );
+        return Err(Error::LedgerError(format!(
+            "Private key not found at '{}'.",
+            priv_key_path.display()
+        )));
+    }
+
+    let keypair = LedgerKeypair::load_from_file(&priv_key_path)?;
+
+    println!("{}", "Compacting ledger...".bold());
+    
+    let block = compact_ledger(&ledger_path, &keypair).map_err(|e| {
+        eprintln!("{}: {}", "Error".red().bold(), e);
+        e
+    })?;
+
+    println!(
+        "{}",
+        "🚀 Ledger successfully compacted and archived.".green().bold()
+    );
+    println!("  {}:   {}", "New Genesis Block Hash".bold(), block.block_hash.cyan());
+    println!("  {}: {}", "Compacted Payload Hash".bold(), block.payload_hash.dimmed());
+    println!("  {}:      {}", "Signer".bold(), block.signer_public_key.dimmed());
+    println!("  {}:   {}", "Timestamp".bold(), block.timestamp.dimmed());
+    println!(
+        "  {}:      {}",
+        "New Ledger File".bold(),
         ledger_path.display().to_string().dimmed()
     );
 
