@@ -32,7 +32,7 @@ pub fn get_obligations(args: &Value) -> ToolResult {
     let policies = storage.list_policies().map_err(|e| format!("{e}"))?;
 
     if policies.is_empty() {
-        return Ok("No policies ingested. Run: needle policy ingest <file>".to_string());
+        return Ok("No policies ingested. Run: sentinel policy ingest <file>".to_string());
     }
 
     let mut out = String::from("## Ingested Policy Obligations\n\n");
@@ -126,7 +126,7 @@ pub fn get_compliance_report(args: &Value) -> ToolResult {
         .map_err(|e| format!("Storage error: {e}"))?;
     let policies = storage.list_policies().map_err(|e| format!("{e}"))?;
     if policies.is_empty() {
-        return Ok("No policies ingested. Run: needle policy ingest <file>".to_string());
+        return Ok("No policies ingested. Run: sentinel policy ingest <file>".to_string());
     }
     let engine = load_engine()?;
 

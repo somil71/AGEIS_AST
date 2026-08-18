@@ -116,7 +116,7 @@ pub(super) fn get_god_nodes(args: &Value, g: &CodeGraph) -> Result<String, Strin
     let ranked = graph::compute_god_nodes(g, limit);
 
     if ranked.is_empty() {
-        return Ok("No call-graph edges found. Run `needle init` on a codebase with functions.".into());
+        return Ok("No call-graph edges found. Run `sentinel init` on a codebase with functions.".into());
     }
 
     let mut out = format!("## God Nodes — Top {} by call-graph degree\n\n", ranked.len());

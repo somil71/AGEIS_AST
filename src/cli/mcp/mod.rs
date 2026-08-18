@@ -3,7 +3,7 @@
 //! Local-only mode (default):
 //!   { "mcpServers": { "needle": { "command": "needle", "args": ["mcp"] } } }
 //!
-//! Cloud mode — searches your connected GitHub repos on Needle cloud:
+//! Cloud mode — searches your connected GitHub repos on Sentinel cloud:
 //!   { "mcpServers": { "needle": {
 //!       "command": "needle", "args": ["mcp"],
 //!       "env": {
@@ -23,6 +23,7 @@
 mod tools_graph;
 pub mod tools_policy;
 mod tools_search;
+mod tools_ledger;
 
 use needle::{
     embedding::EmbeddingModel,
@@ -142,7 +143,7 @@ pub async fn run() -> needle::Result<()> {
     if local.is_none() && cloud.is_none() {
         eprintln!(
             "[needle-mcp] No local index and no cloud config.\n\
-             • Local:  run `needle init <dirs...>` to index a codebase\n\
+             • Local:  run `sentinel init <dirs...>` to index a codebase\n\
              • Cloud:  set NEEDLE_API_KEY + NEEDLE_CLOUD_URL env vars"
         );
         std::process::exit(1);
@@ -183,6 +184,41 @@ pub async fn run() -> needle::Result<()> {
 
         let is_notif = req.id.is_none();
         let id = req.id.clone();
+        
+        // Dynamically hook into the client's workspace if provided
+        if req.method == "initialize" {
+            if let Some(root_uri) = req.params.get("rootUri").and_then(|v| v.as_str()) {
+                if let Some(path_str) = root_uri.strip_prefix("file:///") {
+                    // Windows: "file:///C:/path", Unix: "file:///home/path"
+                    let path = std::path::PathBuf::from(path_str.replace("%20", " "));
+                    if path.exists() {
+                        let _ = std::env::set_current_dir(&path);
+                        if let Ok(new_local) = load_local() {
+                            local = new_local;
+                            local_mtime = index_mtime();
+                        }
+                    }
+                } else if let Some(path_str) = root_uri.strip_prefix("file://") {
+                    let path = std::path::PathBuf::from(path_str.replace("%20", " "));
+                    if path.exists() {
+                        let _ = std::env::set_current_dir(&path);
+                        if let Ok(new_local) = load_local() {
+                            local = new_local;
+                            local_mtime = index_mtime();
+                        }
+                    }
+                }
+            } else if let Some(root_path) = req.params.get("rootPath").and_then(|v| v.as_str()) {
+                let path = std::path::PathBuf::from(root_path);
+                if path.exists() {
+                    let _ = std::env::set_current_dir(&path);
+                    if let Ok(new_local) = load_local() {
+                        local = new_local;
+                        local_mtime = index_mtime();
+                    }
+                }
+            }
+        }
 
         let resp = match handle_request(req, local.as_ref(), cloud.as_ref(), &llm).await {
             Ok(v)    => RpcResponse::ok(id, v),
@@ -247,7 +283,20 @@ async fn dispatch_tool(
         "get_obligations" | "check_compliance" | "get_policy_gaps" | "get_compliance_report" => {
             dispatch_policy_tools(name, args)
         }
+        "get_ledger_status" | "verify_ledger" | "sign_ledger" | "snapshot_ledger" => {
+            dispatch_ledger_tools(name, args)
+        }
         unknown => Err(format!("Unknown tool: {unknown}")),
+    }
+}
+
+fn dispatch_ledger_tools(name: &str, args: &Value) -> Result<String, String> {
+    match name {
+        "get_ledger_status" => tools_ledger::get_ledger_status(args),
+        "verify_ledger"     => tools_ledger::verify_ledger(args),
+        "sign_ledger"       => tools_ledger::sign_ledger(args),
+        "snapshot_ledger"   => tools_ledger::snapshot_ledger(args),
+        unknown => Err(format!("Unknown ledger tool: {unknown}")),
     }
 }
 
@@ -275,7 +324,7 @@ fn dispatch_graph_tools(
 ) -> Result<String, String> {
     let graph = local
         .map(|(_, g)| g)
-        .ok_or_else(|| "Graph tools require a local index. Run: needle init <dirs...>".to_string())?;
+        .ok_or_else(|| "Graph tools require a local index. Run: sentinel init <dirs...>".to_string())?;
     match name {
         "find_callers"       => tools_graph::find_callers(args, graph),
         "find_callees"       => tools_graph::find_callees(args, graph),
@@ -612,6 +661,33 @@ fn tool_definitions() -> Value {
             "name": "get_compliance_report",
             "description": "Run the full compliance audit across all ingested policies and return a Markdown report. Pass `format: 'json'` for structured output.",
             "inputSchema": { "type": "object", "properties": { "format": { "type": "string", "description": "Output format: 'markdown' (default) or 'json'" } } }
+        },
+        {
+            "name": "get_ledger_status",
+            "description": "Returns the current status of the cryptographic ledger (number of blocks, latest hash, integrity).",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "verify_ledger",
+            "description": "Cryptographically verifies the entire Ed25519 signed ledger chain and ensures no files were tampered with.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "sign_ledger",
+            "description": "Appends a new JSON payload to the ledger and signs it. Use this to immutabilize audit reports or code modifications.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "report_json": { "type": "string", "description": "The JSON string of the audit report or event to append" },
+                    "entry_type": { "type": "string", "description": "The type of event (e.g., 'compliance_audit', 'security_scan', 'policy_ingest')", "default": "compliance_audit" }
+                },
+                "required": ["report_json"]
+            }
+        },
+        {
+            "name": "snapshot_ledger",
+            "description": "Compacts the existing cryptographic ledger into a single snapshot block and archives the history. Use this to reduce compute overhead on large ledgers.",
+            "inputSchema": { "type": "object", "properties": {} }
         }
     ])
 }

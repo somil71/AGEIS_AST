@@ -116,7 +116,7 @@ pub(super) async fn get_stats(
     local: Option<&(QueryEngine, CodeGraph)>,
     cloud: Option<&CloudConfig>,
 ) -> Result<String, String> {
-    let mut out = String::from("## Needle Index Overview\n\n");
+    let mut out = String::from("## Sentinel Index Overview\n\n");
 
     if let Some((engine, graph)) = local {
         let files = engine.file_list();
@@ -137,7 +137,7 @@ pub(super) async fn get_stats(
         langs.sort_by(|a, b| b.1.cmp(&a.1));
         for (lang, count) in langs { out.push_str(&format!("- {lang}: {count} file(s)\n")); }
     } else {
-        out.push_str("### Local Index\nNo local index (run `needle init <dirs...>` to index a codebase)\n");
+        out.push_str("### Local Index\nNo local index (run `sentinel init <dirs...>` to index a codebase)\n");
     }
 
     if let Some(cfg) = cloud {
@@ -162,7 +162,7 @@ pub(super) async fn explain(
     let chunks = args["context_chunks"].as_u64().unwrap_or(6).min(12) as usize;
 
     let (engine, graph) = local.ok_or_else(||
-        "explain requires a local index. Run: needle init <dirs...>".to_string()
+        "explain requires a local index. Run: sentinel init <dirs...>".to_string()
     )?;
 
     let (results, _) = engine.search(&question, chunks, None)
@@ -272,7 +272,7 @@ If the provided context doesn't contain enough information to explain the 'why',
 }
 
 pub(super) fn get_security_scan(local: Option<&(QueryEngine, CodeGraph)>) -> Result<String, String> {
-    let (engine, _) = local.ok_or("Security scan requires a local index. Run: needle init <dirs...>")?;
+    let (engine, _) = local.ok_or("Security scan requires a local index. Run: sentinel init <dirs...>")?;
     let issues = analysis::scan_security(&engine.chunks);
 
     if issues.is_empty() {
