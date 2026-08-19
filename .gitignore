@@ -68,3 +68,7 @@ cold_start.txt
 diff.txt
 fix_brief_full.txt
 *.exe
+
+.agents/
+.claude/
+.codex/
