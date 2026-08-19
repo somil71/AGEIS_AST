@@ -18,7 +18,7 @@ Imagine a highly classified local repository managing tax transactions. A new de
 - **Policy Auditing** — Cross-reference ingested PDF/MD security circulars against code behavior.
 - **Hybrid search** — BM25 keyword + HNSW vector search fused via Reciprocal Rank Fusion, sub-50ms
 - **Call graph** — live D3 force graph with endpoint detection and architectural analysis
-- **MCP server** — 14 tools for Claude Code, Cursor, Windsurf, Copilot
+- **MCP server** — 20+ tools for complete Sovereign Audit via Claude Code, Cursor, Windsurf, Copilot
 - **Desktop app** — native window via Tauri, or run headless as a CLI / Docker container
 
 ---
@@ -112,6 +112,10 @@ Connect Sentinel Auditor to any MCP-compatible AI tool:
 | `get_god_nodes` | Highest-degree symbols |
 | `get_endpoints` | All detected HTTP routes |
 | `get_communities` | Label-propagation clusters |
+| `get_obligations` | Lists ingested policy rules |
+| `get_compliance_report` | Runs full AI compliance audit |
+| `verify_ledger` | Verifies the crypto-audit chain |
+| `sign_ledger` | Appends new audit proof to chain |
 | `get_surprises` | Cross-community edges |
 | `get_file_structure` | Directory/module tree |
 | `get_stats` | Index summary |

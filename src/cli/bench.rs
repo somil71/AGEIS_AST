@@ -7,10 +7,10 @@ use needle::Result;
 use colored::Colorize;
 
 pub async fn run() -> Result<()> {
-    println!("{}", "Needle v0.1.0 — benchmarks\n".bold());
+    println!("{}", "Sentinel v0.1.0 — benchmarks\n".bold());
 
     if !Storage::index_exists() {
-        println!("  {}", "No index found. Run: needle init <dirs...>".yellow());
+        println!("  {}", "No index found. Run: sentinel init <dirs...>".yellow());
         return Ok(());
     }
 
@@ -23,7 +23,7 @@ pub async fn run() -> Result<()> {
     println!("  Running benchmarks on {} chunks...\n", n_chunks.to_string().cyan());
 
     if n_chunks == 0 {
-        println!("  {}", "No chunks in index. Run: needle init <dirs...>".yellow());
+        println!("  {}", "No chunks in index. Run: sentinel init <dirs...>".yellow());
         return Ok(());
     }
 

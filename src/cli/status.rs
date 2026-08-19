@@ -5,10 +5,10 @@ use needle::Result;
 use colored::Colorize;
 
 pub async fn run() -> Result<()> {
-    println!("{}", "Needle v0.1.0 — index status\n".bold());
+    println!("{}", "Sentinel v0.1.0 — index status\n".bold());
 
     if !Storage::index_exists() {
-        println!("  {}", "No index found. Run: needle init <dirs...>".yellow());
+        println!("  {}", "No index found. Run: sentinel init <dirs...>".yellow());
         return Ok(());
     }
 
@@ -18,7 +18,7 @@ pub async fn run() -> Result<()> {
     let meta = match storage.load_metadata() {
         Ok(m) => m,
         Err(_) => {
-            println!("  {}", "Index metadata not found. Run: needle reindex".yellow());
+            println!("  {}", "Index metadata not found. Run: sentinel reindex".yellow());
             return Ok(());
         }
     };

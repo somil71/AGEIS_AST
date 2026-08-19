@@ -10,6 +10,7 @@ NEEDLE-SENTINEL extends the Needle code intelligence platform for air-gapped AST
 +-----------------------------------------------------------------------------------+
 |                                   MCP Server                                      |
 |    get_obligations    |    check_compliance    |    get_compliance_report          |
+|    verify_ledger      |    sign_ledger         |    get_ledger_status              |
 +------------------------------------+----------------------------------------------+
                                      |
            +-------------------------+-------------------------+
@@ -55,7 +56,7 @@ NEEDLE-SENTINEL extends the Needle code intelligence platform for air-gapped AST
 | F10 | Policy-Code Matching Engine | Hybrid AST search via `QueryEngine` mapping obligations to `CodeGraph` AST symbols | M3 | R3 Spec |
 | F11 | Policy Compliance Graph | Graph data structure linking obligations to code nodes with `Governs`, `Implements`, `Violates` | M3 | R3 Spec |
 | F12 | CLI `needle audit` | CLI command generating compliance audit reports in console, markdown, and JSON formats | M3 | R3 Spec |
-| F13 | MCP Compliance Tools | Tools `get_obligations`, `check_compliance`, `get_compliance_report` registered in `src/cli/mcp/` | M3 | R3 Spec |
+| F13 | MCP Compliance & Ledger Tools | Tools `get_obligations`, `check_compliance`, `get_compliance_report`, `verify_ledger`, `sign_ledger`, `get_ledger_status` registered in `src/cli/mcp/` | M3 | R3 Spec |
 | F14 | Canonical JSON Block Encoding | Deterministic JSON serialization for block payloads and hashing | M4 | R4 Spec |
 | F15 | SHA-256 Block & Payload Hashing | Cryptographic hash chaining using `sha2` (payload hash, signing preimage, block hash) | M4 | R4 Spec |
 | F16 | Ed25519 Digital Signatures | Non-repudiable signing and verification via `ed25519-dalek` | M4 | R4 Spec |

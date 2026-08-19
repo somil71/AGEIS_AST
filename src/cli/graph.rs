@@ -9,7 +9,7 @@ const TEMPLATE: &str = include_str!("../assets/graph_template.html");
 pub async fn run(output: Option<String>) -> needle::Result<()> {
     if !Storage::index_exists() {
         eprintln!(
-            "{}: No index found. Run `needle init <dirs>` first.",
+            "{}: No index found. Run `sentinel init <dirs>` first.",
             "Error".red().bold()
         );
         return Ok(());
@@ -20,7 +20,7 @@ pub async fn run(output: Option<String>) -> needle::Result<()> {
 
     if graph.nodes.is_empty() {
         eprintln!(
-            "{}: Index graph is empty — try `needle reindex`.",
+            "{}: Index graph is empty — try `sentinel reindex`.",
             "Warning".yellow().bold()
         );
         return Ok(());

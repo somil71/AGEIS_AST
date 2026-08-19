@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub async fn run(output: Option<String>) -> needle::Result<()> {
     if !Storage::index_exists() {
         eprintln!(
-            "{}: No index found. Run `needle init <dirs>` first.",
+            "{}: No index found. Run `sentinel init <dirs>` first.",
             "Error".red().bold()
         );
         return Ok(());
@@ -21,7 +21,7 @@ pub async fn run(output: Option<String>) -> needle::Result<()> {
 
     if graph.nodes.is_empty() {
         eprintln!(
-            "{}: Index graph is empty — try `needle reindex`.",
+            "{}: Index graph is empty — try `sentinel reindex`.",
             "Warning".yellow().bold()
         );
         return Ok(());
@@ -82,7 +82,7 @@ fn build_report(
         Changes here have the widest blast radius in the codebase.\n\n");
 
     if god_nodes.is_empty() {
-        md.push_str("_No call edges detected — run `needle init` on a code directory._\n\n");
+        md.push_str("_No call edges detected — run `sentinel init` on a code directory._\n\n");
     } else {
         md.push_str("| Rank | Symbol | Degree | Kind | File |\n");
         md.push_str("|------|--------|--------|------|------|\n");

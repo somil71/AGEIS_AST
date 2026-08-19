@@ -17,7 +17,7 @@ pub enum Error {
     LedgerError(String),
     OfflineStrictViolation(String),
     DoctorError(String),
-    Other(Box<dyn std::error::Error>),
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl fmt::Display for Error {

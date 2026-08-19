@@ -1,4 +1,4 @@
-//! `needle search <query>` — run hybrid search and render colored result cards.
+//! `sentinel search <query>` — run hybrid search and render colored result cards.
 
 use needle::embedding::EmbeddingModel;
 use needle::indexing::bm25::tokenize;
@@ -24,7 +24,7 @@ pub async fn run(
     // Load index from disk
     if !Storage::index_exists() {
         eprintln!(
-            "{}: No index found.\n  Run: needle init <dirs...>",
+            "{}: No index found.\n  Run: sentinel init <dirs...>",
             "Error".red().bold()
         );
         return Err(needle::Error::IndexNotFound(

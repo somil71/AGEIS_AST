@@ -1,4 +1,4 @@
-//! `needle init <dirs...>` — scan directories, build indexes, save to disk.
+//! `sentinel init <dirs...>` — scan directories, build indexes, save to disk.
 
 use needle::chunking::detect_chunker;
 use needle::config::Config;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub async fn run(directories: Vec<String>) -> Result<()> {
-    println!("{}", "Needle v0.1.0 — initializing index".bold());
+    println!("{}", "Sentinel v0.1.0 — initializing index".bold());
     println!();
 
     let (valid_dirs, config, storage) = init_workspace(directories)?;
@@ -40,7 +40,7 @@ fn init_workspace(directories: Vec<String>) -> Result<(Vec<PathBuf>, Config, Sto
         let p = PathBuf::from(dir);
         if !p.exists() {
             eprintln!(
-                "{}: {} does not exist\n  Check the path and try: needle init <dir>",
+                "{}: {} does not exist\n  Check the path and try: sentinel init <dir>",
                 "Error".red().bold(),
                 dir
             );

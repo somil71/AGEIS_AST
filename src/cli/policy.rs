@@ -1,4 +1,4 @@
-//! `needle policy` CLI subcommand implementation for ingestion, structuring, and listing.
+//! `sentinel policy` CLI subcommand implementation for ingestion, structuring, and listing.
 
 use needle::error::{Error, Result};
 use needle::llm::LlmClient;
@@ -117,7 +117,7 @@ async fn run_list(format: &str, verbose: bool) -> Result<()> {
     if policies.is_empty() {
         println!(
             "{}",
-            "No policies ingested yet. Ingest a policy with: needle policy ingest <path>".yellow()
+            "No policies ingested yet. Ingest a policy with: sentinel policy ingest <path>".yellow()
         );
         return Ok(());
     }

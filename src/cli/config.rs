@@ -17,7 +17,7 @@ pub async fn run(action: Option<ConfigAction>) -> Result<()> {
 
     match action {
         Some(ConfigAction::View) | None => {
-            println!("{}", "Needle configuration\n".bold());
+            println!("{}", "Sentinel configuration\n".bold());
 
             match Storage::load_config() {
                 Ok(config) => {
@@ -25,7 +25,7 @@ pub async fn run(action: Option<ConfigAction>) -> Result<()> {
                     println!();
                     println!("  Watched directories:");
                     if config.watched_dirs.is_empty() {
-                        println!("    (none — run: needle init <dirs...>)");
+                        println!("    (none — run: sentinel init <dirs...>)");
                     } else {
                         for dir in &config.watched_dirs {
                             println!("    {}", dir.cyan());
@@ -47,7 +47,7 @@ pub async fn run(action: Option<ConfigAction>) -> Result<()> {
                 }
                 Err(_) => {
                     println!("  {}", "No configuration found.".yellow());
-                    println!("  Run: needle init <dirs...> to create it.");
+                    println!("  Run: sentinel init <dirs...> to create it.");
                 }
             }
         }
@@ -58,11 +58,11 @@ pub async fn run(action: Option<ConfigAction>) -> Result<()> {
             if !config_path.exists() {
                 println!(
                     "  {}",
-                    "File does not exist yet. Run: needle init <dirs...>".yellow()
+                    "File does not exist yet. Run: sentinel init <dirs...>".yellow()
                 );
             } else {
                 println!("  Open this file in your editor to modify settings.");
-                println!("  After editing, run: needle reindex");
+                println!("  After editing, run: sentinel reindex");
             }
         }
     }

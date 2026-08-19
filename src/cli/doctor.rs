@@ -1,4 +1,4 @@
-//! `needle doctor` — System readiness, dependency isolation, and sovereign compliance diagnostic subsystem.
+//! `sentinel doctor` — System readiness, dependency isolation, and sovereign compliance diagnostic subsystem.
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ impl DoctorReport {
     }
 
     pub fn print_human(&self) {
-        println!("{}", "Needle v0.1.0 — Sovereign Readiness Diagnostic\n".bold());
+        println!("{}", "Sentinel v0.1.0 — Sovereign Readiness Diagnostic\n".bold());
 
         for check in &self.checks {
             let symbol = match check.status {
@@ -455,7 +455,7 @@ fn check_storage_integrity() -> DiagnosticCheck {
         DiagnosticCheck {
             name: "Local Index & Storage".into(),
             status: CheckStatus::Info,
-            details: "No local index found at .needle (Run 'needle init <dirs>' to index code)".into(),
+            details: "No local index found at .needle (Run 'sentinel init <dirs>' to index code)".into(),
             remediation: None,
         }
     }

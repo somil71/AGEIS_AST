@@ -1,17 +1,17 @@
-//! `needle reindex` — force full rebuild of all indexes.
+//! `sentinel reindex` — force full rebuild of all indexes.
 
 use needle::storage::Storage;
 use needle::Result;
 use colored::Colorize;
 
 pub async fn run() -> Result<()> {
-    println!("{}", "Needle v0.1.0 — reindexing\n".bold());
+    println!("{}", "Sentinel v0.1.0 — reindexing\n".bold());
 
     let config = match Storage::load_config() {
         Ok(c) => c,
         Err(_) => {
             eprintln!(
-                "{}: No configuration found.\n  Run: needle init <dirs...> first.",
+                "{}: No configuration found.\n  Run: sentinel init <dirs...> first.",
                 "Error".red().bold()
             );
             return Err(needle::Error::ConfigError("no config".to_string()));

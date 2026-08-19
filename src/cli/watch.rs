@@ -14,13 +14,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 pub async fn run() -> Result<()> {
-    println!("{}", "Needle — watch mode\n".bold());
+    println!("{}", "Sentinel — watch mode\n".bold());
 
     let config = match Storage::load_config() {
         Ok(c) => c,
         Err(_) => {
             eprintln!(
-                "{}: No index found. Run: needle init <dirs...> first.",
+                "{}: No index found. Run: sentinel init <dirs...> first.",
                 "Error".red().bold()
             );
             return Ok(());

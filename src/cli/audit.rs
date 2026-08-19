@@ -1,4 +1,4 @@
-//! `needle audit` — run the full compliance linker and print a report.
+//! `sentinel audit` — run the full compliance linker and print a report.
 //!
 //! Loads every ingested policy document from `.needle/policy/`,
 //! runs the compliance linker against the current code index, and prints a
@@ -22,10 +22,10 @@ pub async fn run(ledger: bool, output: Option<String>, json: bool, strict: bool,
     if !Storage::index_exists() {
         eprintln!(
             "{}",
-            "No index found. Run: needle init <dirs...>".red()
+            "No index found. Run: sentinel init <dirs...>".red()
         );
         return Err(needle::error::Error::IndexNotFound(
-            "No index found. Run: needle init <dirs...>".to_string()
+            "No index found. Run: sentinel init <dirs...>".to_string()
         ));
     }
 
@@ -40,7 +40,7 @@ pub async fn run(ledger: bool, output: Option<String>, json: bool, strict: bool,
     if policies.is_empty() {
         println!(
             "{}",
-            "No policies ingested. Run: needle policy ingest <file>".yellow()
+            "No policies ingested. Run: sentinel policy ingest <file>".yellow()
         );
         return Ok(());
     }
@@ -136,7 +136,7 @@ pub async fn run(ledger: bool, output: Option<String>, json: bool, strict: bool,
         use std::str::FromStr;
         let key_path = default_key_priv_path();
         if !key_path.exists() {
-            eprintln!("{}", "⚠ No ledger key found. Run: needle ledger keygen".yellow());
+            eprintln!("{}", "⚠ No ledger key found. Run: sentinel ledger keygen".yellow());
         } else {
             let kp = LedgerKeypair::load_from_file(&key_path)?;
             let payload = serde_json::json!({
