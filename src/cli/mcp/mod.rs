@@ -659,8 +659,15 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "get_compliance_report",
-            "description": "Run the full compliance audit across all ingested policies and return a Markdown report. Pass `format: 'json'` for structured output.",
-            "inputSchema": { "type": "object", "properties": { "format": { "type": "string", "description": "Output format: 'markdown' (default) or 'json'" } } }
+            "description": "Runs full compliance audit across all ingested policies. Use 'limit' and 'offset' to paginate large reports and avoid context window limits.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "description": "Format of the report (e.g. 'json', 'markdown')", "default": "markdown" },
+                    "limit": { "type": "number", "description": "Maximum number of obligations to return in the details section", "default": 50 },
+                    "offset": { "type": "number", "description": "Number of obligations to skip", "default": 0 }
+                }
+            }
         },
         {
             "name": "get_ledger_status",

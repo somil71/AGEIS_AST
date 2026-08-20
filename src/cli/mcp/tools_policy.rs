@@ -122,6 +122,9 @@ pub fn get_policy_gaps(args: &Value) -> ToolResult {
 /// Runs full compliance audit across all ingested policies and returns a Markdown report.
 pub fn get_compliance_report(args: &Value) -> ToolResult {
     let json_out = args["format"].as_str() == Some("json");
+    let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+    
     let storage = Storage::new(Storage::default_index_dir())
         .map_err(|e| format!("Storage error: {e}"))?;
     let policies = storage.list_policies().map_err(|e| format!("{e}"))?;
@@ -148,36 +151,52 @@ pub fn get_compliance_report(args: &Value) -> ToolResult {
     }
 
     let mut md = String::from("# NEEDLE-SENTINEL Compliance Report\n\n");
-    md.push_str(&format!("| ✅ Satisfied | ❌ Violated | ⚠️ No Evidence | Total |\n|---|---|---|---|\n"));
+    let total_obligations = total_satisfied + total_violated + total_no_evidence;
+    
+    md.push_str(&format!("| ✅ Satisfied | ❌ Violated | ❓ No Evidence | Total |\n|---|---|---|---|\n"));
     md.push_str(&format!("| {} | {} | {} | {} |\n\n",
         total_satisfied, total_violated, total_no_evidence,
-        total_satisfied + total_violated + total_no_evidence));
+        total_obligations));
 
+    // Flatten all links for pagination
+    let mut all_links = Vec::new();
     for report in &all_reports {
         let score_pct = (report.compliance_score() * 100.0) as u32;
-        md.push_str(&format!("---\n\n## {} (v{}) — **{}% compliant**\n\n",
-            report.policy_name, report.policy_version, score_pct));
-
+        md.push_str(&format!("**{} (v{})** — **{}% compliant**\n\n", report.policy_name, report.policy_version, score_pct));
         for link in &report.links {
-            let status_icon = match &link.status {
-                ComplianceStatus::Satisfied { .. } => "✅",
-                ComplianceStatus::Violated { .. } => "❌",
-                ComplianceStatus::NoImplementationFound => "⚠️",
-            };
-            md.push_str(&format!("{status_icon} **[{}]** {} `[{}]`\n", link.clause_number, link.title, link.severity));
-            match &link.status {
-                ComplianceStatus::Violated { reason, .. } => {
-                    md.push_str(&format!("   > ⚡ Violation: {reason}\n"));
-                }
-                ComplianceStatus::Satisfied { evidence } => {
-                    if let Some(ev) = evidence.first() {
-                        md.push_str(&format!("   > Evidence: `{}:{}`\n", ev.file_path, ev.line_start));
-                    }
-                }
-                ComplianceStatus::NoImplementationFound => {}
-            }
+            all_links.push((&report.policy_name, link));
         }
-        md.push('\n');
     }
+
+    let paginated_links: Vec<_> = all_links.into_iter().skip(offset).take(limit).collect();
+    
+    md.push_str("---\n\n### Obligation Details\n\n");
+    if paginated_links.is_empty() {
+        md.push_str("No obligations found in this range.\n");
+    }
+
+    for (policy_name, link) in paginated_links {
+        let status_icon = match &link.status {
+            ComplianceStatus::Satisfied { .. } => "✅",
+            ComplianceStatus::Violated { .. } => "❌",
+            ComplianceStatus::NoImplementationFound => "❓",
+        };
+        md.push_str(&format!("{} **[{}]** {} `[{}]` *(from {})*\n", status_icon, link.clause_number, link.title, link.severity, policy_name));
+        match &link.status {
+            ComplianceStatus::Violated { reason, .. } => {
+                md.push_str(&format!("   > 🚨 Violation: {reason}\n"));
+            }
+            ComplianceStatus::Satisfied { evidence } => {
+                if let Some(ev) = evidence.first() {
+                    md.push_str(&format!("   > Evidence: `{}:{}`\n", ev.file_path, ev.line_start));
+                }
+            }
+            ComplianceStatus::NoImplementationFound => {}
+        }
+    }
+    
+    let end_idx = std::cmp::min(offset + limit, total_obligations);
+    md.push_str(&format!("\n---\n*Showing {} to {} of {} total obligations. Use `offset` parameter to fetch more.*\n", offset + 1, end_idx, total_obligations));
+
     Ok(md)
 }
